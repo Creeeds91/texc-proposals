@@ -1,0 +1,161 @@
+/* ============================================================================
+   DESIGN TOKENS — copied verbatim from the website (texc/app/globals.css,
+   :root and @theme), which is the reference. Names and values must match it;
+   `node scripts/check.mjs content-sync` compares the two through a sibling
+   checkout of the website and fails on any drift.
+
+   The paper-only values (--doc-*) come from texc/documents/reference/tokens.css,
+   the print counterpart of the same palette.
+
+   Never a raw hex in a component. A value that is not here is added here first.
+   ========================================================================= */
+
+/* Oxanium (SIL OFL 1.1, assets/fonts/OFL-Oxanium.txt), self-hosted. 800 is its
+   heaviest real cut; headings pin to it so nothing asks for a synthesised 900. */
+@font-face {
+  font-family: "Oxanium";
+  font-style: normal;
+  font-weight: 800;
+  font-display: swap;
+  src: url("/assets/fonts/Oxanium-800-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Oxanium";
+  font-style: normal;
+  font-weight: 800;
+  font-display: swap;
+  src: url("/assets/fonts/Oxanium-800-latin-ext.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+/* Basement Grotesque (Regular, Bold Extra Condensed) is the website's label and
+   body face. Its purchase record is still outstanding (texc/docs/spec.md), and a
+   webfont licence must cover THIS property too — so it is not shipped here yet.
+   Until TEXC confirms it (open item C26), labels and body run on the fallback
+   stacks below. Switching it on is two @font-face rules and nothing else. */
+
+:root {
+  /* ---- Gold gradient stops (sampled from the master logo) --------------- */
+  --gold-1: #ad7b2b;
+  --gold-2: #c59e42;
+  --gold-3: #fbf2b6;
+  --gold-4: #debe66;
+  --gold-5: #b2822f;
+  --gold-gradient: linear-gradient(180deg, #ad7b2b 0%, #c59e42 24%, #fbf2b6 49%, #debe66 68%, #b2822f 100%);
+  --gold-gradient-h: linear-gradient(90deg, #ad7b2b 0%, #c59e42 24%, #fbf2b6 49%, #debe66 68%, #b2822f 100%);
+  --gold: #c59e42;
+  --gold-deep: #ad7b2b;
+  --gold-hi: #fbf2b6;
+
+  /* ---- Ink / neutrals --------------------------------------------------- */
+  --ink: #111111;
+  --ink-800: #1c1c1c;
+  --ink-700: #262626;
+  --ink-600: #333333;
+  --steel-500: #6b6b6b; /* NOT for text — borders and decoration only */
+  --steel-400: #8f8f8f; /* muted text on dark. Do not darken (AA). */
+  --steel-300: #b8b6b1;
+  --steel-200: #d8d5cf;
+  --paper: #f4f2ec;
+  --white: #ffffff;
+  --ink-on-paper: #3a352d;
+  --ink-on-paper-muted: #57524a;
+
+  /* ---- Safety semantics — status only ----------------------------------- */
+  --hazard: #d9531e;
+  --caution: #e0a400;
+  --go: #3f8f5b;
+  --stop: #b3261e;
+
+  /* ---- Semantic aliases ------------------------------------------------- */
+  --bg: var(--ink);
+  --bg-raised: var(--ink-800);
+  --surface-card: var(--ink-700);
+  --surface-light: var(--paper);
+  --text: var(--white);
+  --text-muted: var(--steel-400);
+  --text-on-light: var(--ink);
+  --text-muted-light: var(--steel-500);
+  --text-brand: var(--gold);
+  --border: var(--ink-600);
+  --border-strong: var(--gold);
+  --border-light: rgb(17 17 17 / 0.14);
+  --accent: var(--gold);
+  --accent-fill: var(--gold-gradient);
+  --focus-ring: rgb(197 158 66 / 0.55);
+
+  /* ---- Paper (from documents/reference/tokens.css) ---------------------- */
+  --doc-page: #faf9f5;
+  --doc-band: #eae7df;
+  --doc-rule: #d5d2ca;
+  --doc-gold-text: #7a5b17; /* gold TEXT on paper — 5.97:1. --gold there is 2.39:1 and fails. */
+
+  /* ---- Spacing — 4px base grid ------------------------------------------ */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+  --space-8: 64px;
+  --space-9: 96px;
+  --space-10: 128px;
+
+  /* ---- Layout ----------------------------------------------------------- */
+  --container: 1200px;
+  --gutter: 24px;
+
+  /* ---- Motion — quick, mechanical, no bounce ---------------------------- */
+  --ease-standard: cubic-bezier(0.2, 0.6, 0.2, 1);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --dur-fast: 120ms;
+  --dur-base: 180ms;
+  --dur-slow: 280ms;
+
+  /* ---- Type (website @theme) -------------------------------------------- */
+  --font-heading: "Oxanium", "Arial Narrow", sans-serif;
+  --font-display: "Arial Narrow", "Helvetica Neue Condensed", "Liberation Sans Narrow", "Helvetica Neue", Arial, sans-serif; /* Basement Grotesque Bold Extra Condensed, once licensed */
+  --font-body: "Helvetica Neue", Arial, sans-serif; /* Basement Grotesque Regular, once licensed */
+  --text-display: 88px;
+  --text-h1: 56px;
+  --text-h2: 40px;
+  --text-h3: 28px;
+  --text-h4: 20px;
+  --text-lead: 20px;
+  --text-body: 16px;
+  --text-sm: 14px;
+  --text-xs: 12px;
+  --leading-tight: 0.98;
+  --leading-heading: 1.08;
+  --leading-body: 1.55;
+  --tracking-display: 0.02em;
+  --tracking-eyebrow: 0.22em;
+  --tracking-body: 0.005em;
+  --tracking-nav: 0.13em;
+  --tracking-label: 0.16em;
+
+  /* ---- Corners, shadows (website @theme) -------------------------------- */
+  --radius-none: 0px;
+  --radius-sm: 2px;
+  --radius-md: 4px;
+  --radius-lg: 8px;
+  --radius-pill: 999px;
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
+  --shadow-md: 0 6px 20px rgb(0 0 0 / 0.45);
+  --shadow-lg: 0 18px 48px rgb(0 0 0 / 0.55);
+  --shadow-gold: 0 6px 24px rgb(197 158 66 / 0.28);
+  --shadow-header: 0 10px 30px -12px rgb(0 0 0 / 0.8);
+
+  /* ---- This page only --------------------------------------------------- */
+  --topbar-h: 74px;
+  --rail-w: 52px;
+}
+
+@media (max-width: 640px) {
+  :root {
+    --gutter: 16px;
+    --topbar-h: 60px;
+  }
+}

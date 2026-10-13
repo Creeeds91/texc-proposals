@@ -1,0 +1,147 @@
+/* ============================================================================
+   PRINT — A4, loaded with media="print".
+
+   The Roberts IAP printed blank sections: anything not yet scrolled into view
+   was still opacity 0. Here that cannot happen without any script running —
+   every [data-reveal] is forced visible in CSS, and proposal.js also opens the
+   terms and loads lazy images on beforeprint / "Download PDF".
+
+   Paper grounds throughout, an ink band under each section number, rows and
+   cards never split across a page, and a running footer line (reference ·
+   revision · entity · ABN) repeated on every page.
+   ========================================================================= */
+
+@page {
+  size: A4 portrait;
+  margin: 14mm 13mm 18mm;
+  @bottom-left {
+    content: var(--print-footer, "");
+    font-family: "Arial Narrow", Arial, sans-serif;
+    font-size: 7.5pt;
+    letter-spacing: 0.1em;
+    color: #57524a;
+  }
+  @bottom-right {
+    content: "Page " counter(page) " of " counter(pages);
+    font-family: "Arial Narrow", Arial, sans-serif;
+    font-size: 7.5pt;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: #57524a;
+  }
+}
+
+html, body {
+  background: #fff !important;
+  color: var(--ink-on-paper) !important;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+  font-size: 10pt;
+}
+html { scroll-padding-top: 0; }
+
+/* Nothing interactive or fixed prints. */
+.topbar, .pbar, .rail, .sheet, .flt, .skip, .demo-chip,
+.cover-actions, .glance-cta, .accept-actions, [data-print], .att-actions,
+.topbar-sections { display: none !important; }
+
+/* Every reveal is shown. */
+[data-reveal] { opacity: 1 !important; transform: none !important; transition: none !important; }
+
+.wrap { max-width: none; padding: 0; }
+
+/* All sections print on paper, whatever their screen surface. */
+.sec, .sec[data-surface] {
+  background: #fff !important;
+  color: var(--ink-on-paper) !important;
+  padding: 0 0 8mm;
+  break-inside: auto;
+}
+.sec::before { display: none; }
+.sec { margin-top: 7mm; }
+.sec[data-sec="accept"] { break-before: page; }
+.sec .h2, .sec .h3, .sec .kicker, .sec .letter-name, .sec .doccard-title, .sec .flow-title,
+.sec .person-body .h3, .sec .foot-name, .sec .foot-tagline, .glance-cell dd, .about-quote p { color: var(--ink) !important; }
+.sec .h4 { color: var(--doc-gold-text) !important; }
+.sec .label, .sec .fineprint, .sec p, .sec li, .sec dd { color: var(--ink-on-paper); }
+
+/* Section heading becomes an ink band with the number on it. */
+.sec-head {
+  flex-direction: row;
+  align-items: center;
+  gap: 4mm;
+  background: var(--ink);
+  color: var(--white);
+  padding: 3.5mm 5mm;
+  margin: 0 0 6mm;
+  max-width: none;
+  border-bottom: 2px solid var(--gold);
+  break-after: avoid;
+}
+.sec-head .h2 { color: var(--white) !important; font-size: 15pt; }
+.sec-head .sec-num { background: var(--gold); color: var(--ink); transform: none; }
+.h4 { break-after: avoid; }
+/* A heading never ends a page: it travels with what it introduces. */
+.sec-head { break-inside: avoid; break-after: avoid-page; }
+.sec-head + *, .h4 + *, .sec-head + * > :first-child { break-before: avoid-page; }
+.glance, .about, .letter { break-before: avoid-page; }
+/* Short sections print whole; Chromium does not always honour a heading's
+   break-after: avoid when a grid of unbreakable cells follows it. */
+.sec[data-sec="glance"], .sec[data-sec="logistics"], .sec[data-sec="contact"] { break-inside: avoid; }
+/* A person's card may run across a page rather than leave one blank. */
+.person { break-inside: auto; grid-template-columns: 42mm minmax(0, 1fr); }
+.person-photo { max-width: 42mm; }
+
+/* Cover: one page, photo kept but calmer. */
+.cover { min-height: 0; height: 250mm; padding: 0; display: flex; align-items: flex-end; break-after: page; position: relative; overflow: hidden; }
+.cover-media img { filter: none; }
+.cover-scrim { background: linear-gradient(180deg, rgb(17 17 17 / 0.2), rgb(17 17 17 / 0.85)) !important; }
+.cover-in { padding: 12mm; }
+.cover-title, .cover-site, .cover-meta dd, .cover-meta dt { color: var(--white) !important; }
+.cover-credit { color: var(--steel-200) !important; }
+.cover::after { display: block; }
+
+/* Ink cards print as outlined paper cards. */
+.glance, .strip, .doccard, .flow-step, .person, .policy, .att, .accept-form, .notice--dark, .steps4 li {
+  background: #fff !important;
+  border-color: var(--doc-rule) !important;
+  color: var(--ink-on-paper) !important;
+  box-shadow: none !important;
+}
+.glance { background: var(--doc-rule) !important; }
+.glance-cell { background: #fff !important; min-height: 0; }
+.glance-cell dt, .doccard-cat, .doccard-code, .strip-body, .flow-line, .accept-dl dt, .foot-ref dt, .foot-legal { color: var(--ink-on-paper-muted) !important; }
+.glance-cell--total dd, .accept-total dd, .strip-label, .flow-n, .doccard-id { color: var(--doc-gold-text) !important; }
+.doccard-id { background: var(--doc-band); }
+.notice--dark p, .doccard-note, .prose--dark p, .comp li, .policy p:not(.kicker), .att-title, .att-meta, .about .body-lg { color: var(--ink-on-paper) !important; }
+.accept-dl dd, .foot-ref dd { color: var(--ink) !important; }
+.foot-links a { color: var(--doc-gold-text) !important; }
+
+/* The acceptance form prints as a sign-off block, not inputs. */
+.field input { background: #fff !important; border-color: var(--ink-on-paper-muted) !important; color: var(--ink) !important; }
+.check { color: var(--ink) !important; }
+
+/* Keep things whole. */
+tr, .hold, .doccard, .flow-step, .svc, .fig, .att, .process-step, .tl-row, .statements li,
+.callout, .notice, .glance-cell, .meta-grid > div, .totals { break-inside: avoid; }
+thead { display: table-header-group; }
+
+/* Tables keep their desktop shape on paper. */
+.tbl-wrap { overflow: visible; border-color: var(--doc-rule); }
+.tbl { font-size: 9pt; }
+.tbl thead th { background: var(--doc-band) !important; color: var(--ink) !important; }
+
+/* Terms open; editor marks never print. */
+details > *:not(summary) { display: block !important; }
+.terms summary .ic { display: none; }
+mark.confirm { display: none !important; }
+
+/* Running footer: the @page bottom-left box shows --print-footer, which
+   proposal.js sets on the root to the identifying line (reference · revision ·
+   entity · ABN), so it repeats on every page in browsers that print margin
+   boxes (Chromium today). It also prints once, in the footer, everywhere. */
+.foot-line { font-size: 7.5pt; color: var(--ink-on-paper-muted); }
+.foot { padding-top: 6mm; border-top: 2px solid var(--gold); }
+.foot-bottom { border-color: var(--doc-rule); }
+img { break-inside: avoid; }
+a[href^="http"]::after { content: ""; }

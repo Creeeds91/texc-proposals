@@ -1,0 +1,48 @@
+{
+  "_about": "Fixed wording. A proposal can show or hide a line where its section allows, but cannot reword it; an admin unlock is logged (Phase 2). Sources are recorded per line. {name} and {phoneDisplay} are filled from lib/brand.js (the keys must exist there; the build fails if one does not). Lines marked adapted change one word from the source (document -> proposal, website -> proposal) and are listed in docs/open-items.md for TEXC to approve.",
+  "preliminaryStatus": {
+    "text": "This proposal is not a final blast design or authority to undertake blasting. Final work areas, methodology and controls remain subject to further exposure, assessment and applicable approvals.",
+    "source": "texc/documents/projects/2-chalmers-lane-devonport/content/project-understanding.yml, closing callout",
+    "adapted": "document -> proposal"
+  },
+  "noBlastingUntil": {
+    "text": "No blasting activity will proceed until the relevant work area has been assessed, required controls have been confirmed, and applicable approvals and authorisations are in place.",
+    "source": "texc/documents/projects/2-chalmers-lane-devonport/content/preliminary-risk-assessment.yml, Purpose and Status"
+  },
+  "progressive": {
+    "text": "The work is expected to be undertaken progressively rather than as a single unrestricted blast. Each section will be treated as its own controlled work area and reassessed before progression.",
+    "source": "texc/documents/projects/2-chalmers-lane-devonport/content/project-understanding.yml, Proposed Work Process callout"
+  },
+  "paramsLine": {
+    "text": "Parameters are preliminary and indicative only. This proposal is not a final blast design or authority to undertake blasting.",
+    "source": "Brief section 5, row 09, built on the Chalmers Lane status wording"
+  },
+  "sitePlanLabel": {
+    "text": "APPROVED PROJECT MAP — DO NOT REDRAW OR INFER BOUNDARIES",
+    "source": "texc/documents/CLAUDE.md, rule 2"
+  },
+  "envLimitsNote": {
+    "text": "Limits as set by the site approval / regulator — supplied by client.",
+    "source": "Brief section 5, row 10"
+  },
+  "misfire": {
+    "text": "If you are dealing with an active misfire, call {name} on {phoneDisplay} — this proposal is not an emergency channel.",
+    "source": "texc/content/services.ts, misfire-management safety line",
+    "adapted": "an enquiry form -> this proposal"
+  },
+  "emergency000": {
+    "text": "For immediate danger or an active emergency, contact emergency services on 000. This proposal is not an emergency-response service.",
+    "source": "texc/content/pages.ts, contact.emergency",
+    "adapted": "This website -> This proposal"
+  },
+  "hp1Framing": {
+    "text": "Acceptance of the quotation and preliminary risk assessment permits progression of planning and site preparation only and does not constitute unconditional authority to undertake blasting.",
+    "source": "texc/documents/projects/2-chalmers-lane-devonport/content/preliminary-risk-assessment.yml, Approval Comment",
+    "adapted": "Approval of this preliminary assessment -> Acceptance of the quotation and preliminary risk assessment"
+  },
+  "logisticsRule": {
+    "text": "Never publish magazine locations, stock levels, access procedures, transport routes, schedules, quantities, vehicle details or storage destinations.",
+    "source": "texc/content/services.ts, magazine-management and explosives-logistics safety lines",
+    "editorOnly": true
+  }
+}

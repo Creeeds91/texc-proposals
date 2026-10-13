@@ -1,0 +1,395 @@
+{
+  "source": {
+    "repo": "Creeeds91/texc",
+    "commit": "4d5cb265e8b0db59d646af9b83edcf59492a40c1",
+    "files": [
+      "content/site.ts",
+      "content/services.ts",
+      "content/pages.ts"
+    ]
+  },
+  "site": {
+    "legalName": "TEXC Pty Ltd",
+    "tagline": "The Explosive Contractor. Wherever you need one.",
+    "positioning": "Shotfiring & Relief Services",
+    "principal": {
+      "name": "George Scott",
+      "role": "Managing Director | Licensed Shotfirer"
+    }
+  },
+  "capabilityStrip": [
+    {
+      "label": "Flexible support",
+      "body": "Relief cover, peak workloads and short-notice capability."
+    },
+    {
+      "label": "Site integration",
+      "body": "We work within your systems, people and procedures."
+    },
+    {
+      "label": "Specialist capability",
+      "body": "Shotfiring, logistics and magazine support in one source."
+    },
+    {
+      "label": "Safety & compliance",
+      "body": "Risk assessment, documentation and legislative compliance."
+    },
+    {
+      "label": "Tasmania wide",
+      "body": "Supporting projects across the state, including remote sites."
+    }
+  ],
+  "services": [
+    {
+      "slug": "relief-shotfiring",
+      "name": "Relief Shotfiring",
+      "category": "Relief Shotfiring",
+      "icon": "zap",
+      "value": "Additional capability whenever it is required — experienced shotfirers ready to step in on short notice.",
+      "overview": [
+        "Shotfirers take leave, get sick, move on, and operations can simply reach the limits of their existing capability. When that creates a gap, TEXC provides experienced shotfirers who can step in and keep the work moving.",
+        "Whether supporting a quarry, mine, civil project or existing blasting contractor, we integrate into your systems, inductions and procedures — providing additional capability that feels like an extension of your own team."
+      ],
+      "capabilities": [
+        "Leave and vacancy cover",
+        "Peak-workload support",
+        "Shutdown and campaign support",
+        "Short-notice mobilisation",
+        "Production, trim and secondary blasting",
+        "Work within your approved systems"
+      ],
+      "integrate": "TEXC operates within your approved client systems, inductions and site procedures. Mobilisation can be arranged promptly, with minimal lead time, so relief cover integrates cleanly with your existing operation.",
+      "safety": "All work is planned to considered risk assessment and documentation, aligned with your site procedures and applicable legislative requirements. Availability is confirmed on enquiry — engagement does not guarantee immediate availability.",
+      "pending": false
+    },
+    {
+      "slug": "civil-construction",
+      "name": "Civil Construction",
+      "category": "Civil Construction",
+      "icon": "mountain",
+      "value": "Supporting civil contractors through controlled blasting and specialist shotfiring services.",
+      "overview": [
+        "Civil projects often require specialist blasting capability as part of a broader scope of works. TEXC provides controlled rock excavation and experienced shotfiring support to keep the project moving.",
+        "We work in plain English, identify what's required, and integrate with your program and site requirements."
+      ],
+      "capabilities": [
+        "Rock excavation",
+        "Foundation and footing excavations",
+        "Utility corridors",
+        "Subdivisions and road construction",
+        "Infrastructure projects",
+        "Controlled preparation and shotfiring"
+      ],
+      "integrate": "TEXC integrates with your civil program, site controls and documentation. We identify the required next steps so you can plan blasting around the rest of the works with confidence.",
+      "safety": "Controlled blasting is planned to project-specific risk assessment, with vibration and impact managed and monitored. Work is subject to site approvals, procedures and applicable requirements.",
+      "pending": false
+    },
+    {
+      "slug": "quarry-mining",
+      "name": "Quarry & Mining",
+      "category": "Quarry & Mining",
+      "icon": "layers",
+      "value": "Flexible support for production, development and project blasting.",
+      "overview": [
+        "Quarry and mining operations need competent, experienced personnel who can integrate quickly and work to site systems. TEXC provides that capability on a short-term or ongoing basis.",
+        "From production blasting to additional manpower through a busy period, we slot into your operation and keep benches moving."
+      ],
+      "capabilities": [
+        "Production blasting",
+        "Development blasting",
+        "Relief shotfiring",
+        "Blast supervision",
+        "Additional manpower",
+        "Short-term project support"
+      ],
+      "integrate": "TEXC works within your site systems, inductions and procedures, supplying experienced personnel who integrate with your existing crew and operation.",
+      "safety": "All work follows considered risk assessment, documentation and your site procedures, aligned with applicable legislative requirements. Scope and availability are confirmed on enquiry.",
+      "pending": false
+    },
+    {
+      "slug": "microblasting",
+      "name": "Microblasting",
+      "category": "Microblasting",
+      "icon": "crosshair",
+      "value": "Precision blasting for sensitive environments — controlled, monitored and carefully planned.",
+      "overview": [
+        "Microblasting is used where rock removal is required close to buildings, services or people. It relies on careful planning, monitoring and controlled execution rather than scale.",
+        "TEXC assesses the site, designs the blast around the surrounding environment, and controls each stage to achieve the required result safely and efficiently."
+      ],
+      "capabilities": [
+        "Residential rock removal",
+        "Commercial and industrial sites",
+        "Restricted-access work",
+        "Controlled vibration",
+        "Precision rock removal",
+        "Monitoring and assessment"
+      ],
+      "integrate": "TEXC plans microblasting around site conditions, approvals and monitoring requirements, and coordinates with you and any relevant stakeholders throughout.",
+      "safety": "Work is planned to project-specific risk assessment with vibration monitoring where required, subject to site conditions and approvals. TEXC does not guarantee zero vibration, zero disturbance or specific approval outcomes.",
+      "pending": false
+    },
+    {
+      "slug": "shot-sleeping",
+      "name": "Shot Sleeping",
+      "category": "Shot Sleeping",
+      "icon": "moon",
+      "value": "Professional overnight attendance of charged blasts, with clear handover documentation.",
+      "overview": [
+        "Where a charged blast cannot be fired the same day, it may need to be held securely overnight and fired the following day. TEXC provides professional attendance for these situations.",
+        "The operational benefit is continuity — the shot is managed and documented so firing can proceed the following day without delay."
+      ],
+      "capabilities": [
+        "Overnight security attendance",
+        "Sleep shots",
+        "Next-day firing",
+        "Multi-shift blasts",
+        "Compliance",
+        "Handover documentation"
+      ],
+      "integrate": "TEXC coordinates the overnight process with your site and procedures, providing clear handover documentation so the following steps proceed smoothly.",
+      "safety": "Shot sleeping is subject to site approvals, procedures, documentation and applicable requirements. Procedural detail is managed with your site rather than published.",
+      "pending": false
+    },
+    {
+      "slug": "misfire-management",
+      "name": "Misfire Management",
+      "category": "Misfire Management",
+      "icon": "alert-circle",
+      "value": "Experienced personnel to support the assessment, management and controlled resolution of misfires.",
+      "overview": [
+        "Misfires can create complex safety and operational challenges that aren't always resolved in a single shift.",
+        "TEXC provides experienced personnel to support the assessment, management and controlled resolution of suspected or confirmed misfires, working alongside site management and existing blasting teams."
+      ],
+      "capabilities": [
+        "Assessment support",
+        "Controlled resolution",
+        "Suspected and confirmed events",
+        "Multi-shift and multi-day management",
+        "Dedicated personnel for extended events",
+        "Independent documentation and reporting"
+      ],
+      "integrate": "TEXC works alongside site management and your existing blasting team, within your systems, procedures and inductions. Scope and availability are confirmed on enquiry.",
+      "safety": "Misfire management is directed by site management and carried out under your procedures, risk assessment and applicable legislative requirements. Procedural detail is managed with your site rather than published. If you are dealing with an active misfire, call TEXC on 0467 651 182 — an enquiry form is not an emergency channel, and engagement does not guarantee immediate availability.",
+      "pending": false
+    },
+    {
+      "slug": "magazine-management",
+      "name": "Magazine Management",
+      "category": "Magazine Management",
+      "icon": "box",
+      "value": "Professional magazine management and inventory control.",
+      "overview": [
+        "Magazine management is about accurate records, compliant storage and reliable reconciliation. TEXC provides experienced support to keep inventory controlled and documented.",
+        "We handle the administrative and compliance side so your explosives records stay accurate and audit-ready."
+      ],
+      "capabilities": [
+        "Stock management",
+        "Inventory reconciliation",
+        "Compliance",
+        "Documentation",
+        "Magazine inspections"
+      ],
+      "integrate": "TEXC works within your compliance framework and procedures, providing magazine management support that keeps records accurate and reconciled.",
+      "safety": "For security reasons, TEXC does not publish magazine locations, stock levels, access procedures or inventory information. All work is handled under appropriate controls.",
+      "pending": false
+    },
+    {
+      "slug": "magazine-staging",
+      "name": "Magazine Staging",
+      "category": "Magazine Staging & Storage",
+      "icon": "archive",
+      "value": "Secure staging and temporary explosives management for projects.",
+      "overview": [
+        "Projects sometimes need explosives staged securely for a defined period. TEXC provides temporary staging and management support, coordinated with your project requirements.",
+        "Availability is confirmed on enquiry and managed under appropriate controls."
+      ],
+      "capabilities": [
+        "Project staging",
+        "Temporary storage",
+        "Client support",
+        "Inventory management",
+        "Magazine access"
+      ],
+      "integrate": "TEXC coordinates staging around your project timeline and requirements, managed under appropriate controls and confirmed on enquiry.",
+      "safety": "TEXC does not imply unlimited capacity or public access. Storage availability is configurable, confirmed on enquiry, and subject to approval and applicable requirements.",
+      "pending": false
+    },
+    {
+      "slug": "explosives-logistics",
+      "name": "Explosives Logistics",
+      "category": "Explosives Logistics",
+      "icon": "truck",
+      "value": "Safe movement of explosives and accessories, with full transfer documentation.",
+      "overview": [
+        "Getting explosives and accessories to site safely and compliantly is a specialist task. TEXC supports project supply with proper documentation and coordination.",
+        "We manage the paperwork and coordination so the right materials arrive where they are needed."
+      ],
+      "capabilities": [
+        "Deliveries",
+        "Transfer documentation",
+        "Manifest management",
+        "Magazine transfers",
+        "Project supply"
+      ],
+      "integrate": "TEXC coordinates logistics with your project schedule and site requirements, handling transfer documentation and manifests so supply stays compliant.",
+      "safety": "For security reasons, TEXC does not publish transport routes, schedules, quantities, vehicle details or storage destinations. Generic imagery does not imply ownership of vehicles or equipment.",
+      "pending": false
+    },
+    {
+      "slug": "industrial-services",
+      "name": "Industrial Services",
+      "category": "Industrial Services",
+      "icon": "factory",
+      "value": "Supporting industrial projects requiring specialist blasting capability.",
+      "overview": [
+        "Industrial projects and plant shutdowns sometimes need specialist blasting capability for a defined scope. TEXC provides that support, coordinated with your maintenance and operations teams.",
+        "We work within your site requirements and schedule, providing specialist blasting capability where and when it's needed."
+      ],
+      "capabilities": [
+        "Manufacturing support",
+        "Plant shutdowns",
+        "Industrial maintenance",
+        "Specialist blasting"
+      ],
+      "integrate": "TEXC coordinates with your shutdown program and industrial site controls, providing specialist capability for the defined scope and window.",
+      "safety": "Work is planned to project-specific risk assessment and your site procedures, subject to approvals and applicable requirements.",
+      "pending": false
+    },
+    {
+      "slug": "mpu-support",
+      "name": "MPU Support",
+      "category": "MPU Support",
+      "icon": "users",
+      "value": "Additional personnel to support production operations.",
+      "overview": [
+        "Production operations sometimes need extra experienced hands on the bench. TEXC supplies personnel to support loading, preparation and explosives management.",
+        "We integrate with your production crew and systems for the period you need."
+      ],
+      "capabilities": [
+        "Bench support",
+        "Loading assistance",
+        "Explosives management",
+        "Blast preparation"
+      ],
+      "integrate": "TEXC provides personnel who integrate with your production operation, systems and inductions. The specific offering — personnel, equipment or both — is confirmed on enquiry.",
+      "safety": "All work follows your site procedures, risk assessment and applicable requirements. TEXC supplies experienced personnel; equipment provision is confirmed on enquiry.",
+      "pending": false
+    },
+    {
+      "slug": "remote-operations",
+      "name": "Remote Area Operations",
+      "category": "Remote Area Operations",
+      "icon": "map-pin",
+      "value": "Support for difficult-to-access sites — capability currently in development.",
+      "overview": [
+        "TEXC is scoping support for remote and difficult-to-access projects. This is not a service TEXC delivers today, and nothing on this page should be read as a current capability, licence or approval.",
+        "If you have work coming up somewhere hard to reach, tell us about it. Early visibility on real projects is what shapes where this goes and how quickly."
+      ],
+      "capabilities": [],
+      "integrate": "",
+      "safety": "No remote area capability is offered or implied at this stage. TEXC does not imply ownership of aircraft or specialist transport, and does not publish remote magazine or project coordinates. Any future work would be subject to the licences, approvals and site procedures applicable to it, confirmed before anything is agreed.",
+      "pending": true
+    },
+    {
+      "slug": "marine-coastal",
+      "name": "Marine & Coastal",
+      "category": "Marine & Coastal",
+      "icon": "map-pin",
+      "value": "Marine and coastal blasting support — capability currently in development.",
+      "overview": [
+        "TEXC is scoping marine and coastal blasting support. This is not a service TEXC delivers today, and nothing on this page should be read as a current capability, licence or approval.",
+        "If you have a coastal or marine requirement coming up, tell us about it. Early visibility on real projects is what shapes where this goes and how quickly."
+      ],
+      "capabilities": [],
+      "integrate": "",
+      "safety": "No marine or coastal capability is offered or implied at this stage. Any future work would be subject to the licences, approvals and site procedures applicable to it, confirmed before anything is agreed.",
+      "pending": true
+    }
+  ],
+  "about": {
+    "support": {
+      "eyebrow": "Support, not competition",
+      "heading": "Built to support established contractors.",
+      "body": "Rather than competing against established blasting contractors, TEXC was built to support them — integrating into existing operations for a single day or the long term, working within your systems or approved TEXC procedures.",
+      "quote": "We don't see other blasting contractors as competitors. We see them as potential clients and project partners."
+    },
+    "working": {
+      "eyebrow": "Working with TEXC",
+      "heading": "What it should feel like.",
+      "steps": [
+        {
+          "number": "01",
+          "title": "Straightforward",
+          "body": "Easy to engage, with a clear path from enquiry to work on site."
+        },
+        {
+          "number": "02",
+          "title": "Responsive",
+          "body": "We work to keep communication clear and lead times short."
+        },
+        {
+          "number": "03",
+          "title": "Professional",
+          "body": "Considered planning, documentation and compliance on every job."
+        },
+        {
+          "number": "04",
+          "title": "Practical",
+          "body": "Real support that fits how your project actually runs."
+        }
+      ]
+    }
+  },
+  "scopeNote": "Service scope is subject to site approvals, procedures, documentation and applicable requirements. Availability is confirmed on enquiry.",
+  "competency": {
+    "heading": "Competency sits with the person doing the work.",
+    "body": "Units of competency and dangerous-goods licences are held by individuals, not by the company. TEXC does not present personal qualifications as company qualifications. What TEXC provides is the insurance, systems and approvals those people work inside — and the assurance that whoever turns up holds what the job requires."
+  },
+  "assurance": {
+    "title": "Insurance, licensing & certification",
+    "body": "Specific insurance cover, licences and certifications are confirmed directly on enquiry and provided as supporting documentation where required. We publish these only once verified — no certification marks are shown here decoratively."
+  },
+  "emergency": {
+    "title": "In an emergency",
+    "body": "For immediate danger or an active emergency, contact emergency services on 000. This website is not an emergency-response service."
+  },
+  "regions": [
+    "Northern Tasmania",
+    "Southern Tasmania",
+    "North-West Tasmania",
+    "East Coast Tasmania",
+    "West Coast Tasmania",
+    "Statewide / multiple"
+  ],
+  "people": [
+    {
+      "slug": "george-scott",
+      "name": "George Scott",
+      "role": "Managing Director | Licensed Shotfirer",
+      "bio": [
+        "George Scott is the founder and Managing Director of TEXC and a licensed shotfirer with hands-on experience across quarrying, civil construction, mining and specialist blasting operations.",
+        "Having worked across both large-scale operations and smaller specialist projects, George established TEXC with a practical understanding of how blasting operations work in the field and where additional capability can make a difference.",
+        "He remains actively involved in TEXC’s field operations while leading the continued development of the business, its systems and its approach to specialist blasting services."
+      ],
+      "competencies": [
+        "RIIBLA201E Support Shotfiring Operations",
+        "RIIBLA205E Store, Handle & Transport Explosives",
+        "RIIBLA301E Conduct Surface Shotfiring Operations",
+        "RIIBLA305E Conduct Secondary Blasting",
+        "RIIBLA401 Manage Blasting Operations",
+        "RIIBLA402 Monitor & Control the Effects of Blasting on the Environment",
+        "RIIPLA403 Design Blasts",
+        "RIIBHD301D Conduct Surface Blast Hole Drilling Operations",
+        "RIIRIS301E Apply Risk Management Processes",
+        "RIICOM301E Communicate Information",
+        "RIIWHS301E Conduct Health & Safety Investigations"
+      ],
+      "licences": [
+        "TLILIC0001 Licence to Transport Dangerous Goods by Road",
+        "TLILIC2001A Licence to Operate a Forklift Truck",
+        "TLILIC3017 Licence to Drive a Heavy Combination Vehicle"
+      ],
+      "licenceNote": "Copies are provided as supporting documentation on request. Nothing is listed here until it has been sighted and is current."
+    }
+  ]
+}

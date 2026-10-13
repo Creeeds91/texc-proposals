@@ -1,0 +1,154 @@
+#!/usr/bin/env node
+/**
+ * Builds the client page from its template.
+ *
+ *   node scripts/build.mjs
+ *
+ * templates/proposal.html  ->  views/proposal.html   the client page (the gate boots it, Phase 3)
+ *                          ->  views/demo.html       the same page, booted from fixtures/demo-proposal.json
+ *
+ * What it fills:
+ *   {{brand.<key>}}     from lib/brand.js (the only place the business is named)
+ *   {{brand.json}}      the brand as a JSON data block
+ *   {{template.json}}   locked lines, the website snapshot, the suite register,
+ *                       the workflow and the built-in photo set, as a JSON data block
+ *   {{snap.<path>}}     website wording baked in as the template's defaults
+ *
+ * What it refuses (the build fails, nothing is written):
+ *   - any {{token}} left unfilled
+ *   - an executable inline <script>, a <style> element, a style="" attribute or
+ *     an on*="" handler — the client page runs under a CSP with no
+ *     'unsafe-inline', so any of these would silently not run in production
+ *   - editor code in a client view (Phase 2 adds the editor; the guard is here first)
+ *
+ * The output is deterministic: a clean `git status` after building means the
+ * committed views are current.
+ */
+import { readFileSync, writeFileSync, readdirSync, mkdirSync } from 'node:fs';
+import { resolve, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { BRAND, brandJson, fillBrand } from '../lib/brand.js';
+
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const read = (p) => readFileSync(resolve(ROOT, p), 'utf8');
+const json = (p) => JSON.parse(read(p));
+
+export const TEMPLATE_VERSION = 1;
+
+const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+const dataBlock = (obj) => JSON.stringify(obj).replace(/</g, '\\u003c');
+
+export function templateData() {
+  const snap = json('content/texc-snapshot.json');
+  const lockedFile = json('content/locked-lines.json');
+  const register = json('content/register.json');
+  const workflow = json('content/workflow.json');
+
+  const locked = {};
+  for (const [key, line] of Object.entries(lockedFile)) {
+    if (key.startsWith('_') || line.editorOnly) continue;
+    for (const [, token] of line.text.matchAll(/\{(\w+)\}/g)) {
+      if (typeof BRAND[token] !== 'string') throw new Error(`Locked line "${key}" uses {${token}}, which lib/brand.js does not define`);
+    }
+    locked[key] = line.text;
+  }
+
+  // Built-in photos: TEXC's own photography only, at the widths in the folder.
+  const photos = {};
+  for (const file of readdirSync(resolve(ROOT, 'assets/img/photos')).sort()) {
+    const m = /^(.+)-(\d+)\.webp$/.exec(file);
+    if (!m) continue;
+    (photos[m[1]] ||= { widths: [], path: `/assets/img/photos/${m[1]}-{w}.webp` }).widths.push(Number(m[2]));
+  }
+  for (const p of Object.values(photos)) p.widths.sort((a, b) => a - b);
+
+  return {
+    version: TEMPLATE_VERSION,
+    locked,
+    snap: {
+      about: snap.about,
+      competency: snap.competency,
+      assurance: snap.assurance,
+      scopeNote: snap.scopeNote,
+      workflow: { intro: workflow.intro },
+    },
+    services: snap.services.map(({ slug, name, category, value, overview, capabilities, integrate, safety, pending }) =>
+      ({ slug, name, category, value, overview, capabilities, integrate, safety, pending })),
+    serviceIcons: Object.fromEntries(snap.services.map((s) => [s.slug, s.icon])),
+    people: snap.people,
+    register: register.documents,
+    workflow: { intro: workflow.intro, stages: workflow.stages },
+    photos,
+    principalPhoto: photos['george-scott'] ? 'george-scott' : null,
+    // CCR-03: no Risk Level Table exists, so ratings stay hidden until TEXC supplies one.
+    ratingsEnabled: false,
+  };
+}
+
+function snapRows(snap) {
+  const strip = snap.capabilityStrip.map((c) =>
+    `      <li data-row><span class="strip-label" data-col="label">${esc(c.label)}</span><span class="strip-body" data-col="body">${esc(c.body)}</span></li>`).join('\n');
+  const steps = snap.about.working.steps.map((s) =>
+    `      <li data-row><span class="steps4-n" data-col="number">${esc(s.number)}</span><span class="steps4-title" data-col="title">${esc(s.title)}</span><span class="steps4-body" data-col="body">${esc(s.body)}</span></li>`).join('\n');
+  return { strip, steps };
+}
+
+export function checkView(name, html) {
+  const problems = [];
+  const scripts = html.match(/<script\b[^>]*>/gi) || [];
+  for (const tag of scripts) {
+    const isData = /type="application\/json"/i.test(tag);
+    const hasSrc = /\bsrc="/i.test(tag);
+    if (!isData && !hasSrc) problems.push(`inline executable script: ${tag}`);
+  }
+  if (/<style\b/i.test(html)) problems.push('a <style> element');
+  if (/\sstyle\s*=\s*["']/i.test(html)) problems.push('a style="" attribute');
+  const handler = html.match(/\son[a-z]+\s*=\s*["']/i);
+  if (handler) problems.push(`an inline event handler (${handler[0].trim()})`);
+  const left = html.match(/\{\{[^}]+\}\}/);
+  if (left) problems.push(`an unfilled token ${left[0]}`);
+  for (const leak of ['/assets/js/editor', '/assets/css/editor.css', 'passphrase.js']) {
+    if (html.includes(leak)) problems.push(`editor code in a client view (${leak})`);
+  }
+  if (problems.length) throw new Error(`${name}: ${problems.join('; ')}`);
+}
+
+export function build({ write = true } = {}) {
+  const snap = json('content/texc-snapshot.json');
+  const rows = snapRows(snap);
+  const data = templateData();
+  let html = read('templates/proposal.html');
+
+  html = html
+    .replace('{{brand.json}}', brandJson())
+    .replace('{{template.json}}', dataBlock(data))
+    .replace('{{snap.strip.rows}}', rows.strip)
+    .replace('{{snap.steps.rows}}', rows.steps)
+    .replace(/\{\{snap\.([a-zA-Z.]+)\}\}/g, (m, path) => {
+      const v = path.split('.').reduce((o, k) => (o == null ? undefined : o[k]), snap);
+      if (typeof v !== 'string') throw new Error(`Unknown snapshot token ${m}`);
+      return esc(v);
+    });
+  html = fillBrand(html);
+
+  const views = {
+    'views/proposal.html': html.replace('data-tpl="1"', `data-tpl="${TEMPLATE_VERSION}" data-boot="template"`),
+    'views/demo.html': html.replace('data-tpl="1"', `data-tpl="${TEMPLATE_VERSION}" data-boot="fixture" data-fixture="/fixtures/demo-proposal.json"`),
+  };
+  for (const [name, body] of Object.entries(views)) checkView(name, body);
+  if (write) {
+    mkdirSync(resolve(ROOT, 'views'), { recursive: true });
+    for (const [name, body] of Object.entries(views)) writeFileSync(resolve(ROOT, name), body);
+  }
+  return views;
+}
+
+if (import.meta.url === `file://${process.argv[1]}`) {
+  try {
+    const views = build();
+    for (const [name, body] of Object.entries(views)) console.log(`wrote ${name} (${Buffer.byteLength(body)} bytes) for ${BRAND.legalName}`);
+  } catch (err) {
+    console.error('BUILD FAILED —', err.message);
+    process.exit(1);
+  }
+}

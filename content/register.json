@@ -1,0 +1,17 @@
+{
+  "_about": "TEXC's operational document suite, copied exactly from texc/documents/register.md. Names and codes are TEXC's; an unallocated code stays empty and is never invented. TEXC12 is a draft awaiting TEXC approval and is never offered on a proposal.",
+  "documents": [
+    { "id": "TEXC01", "title": "Civil Shotfiring Risk & Compliance Tool", "code": "TEXC-FRA-BLAST-003", "category": "Risk & Compliance", "status": "approved" },
+    { "id": "TEXC02", "title": "Shotfiring Risk & Compliance Tool (quarry & mining)", "code": "TEXC-FRA-BLAST-002", "category": "Risk & Compliance", "status": "approved" },
+    { "id": "TEXC03", "title": "Explosive Security Risk & Compliance Tool (shot sleeping)", "code": "TEXC-FRA-SLEEP-001", "category": "Risk & Compliance", "status": "approved" },
+    { "id": "TEXC04", "title": "Load Manifest", "code": "TEXC-SMS-FRM-012", "category": "Logistics & Registers", "status": "approved" },
+    { "id": "TEXC05", "title": "Magazine Key Register", "code": "", "category": "Logistics & Registers", "status": "approved" },
+    { "id": "TEXC06", "title": "Magazine Record Book", "code": "", "category": "Logistics & Registers", "status": "approved" },
+    { "id": "TEXC07", "title": "Blast Report", "code": "", "category": "Reports", "status": "approved" },
+    { "id": "TEXC08", "title": "Explosive Security Report", "code": "", "category": "Reports", "status": "approved" },
+    { "id": "TEXC09", "title": "Misfire Risk & Compliance Tool", "code": "TEXC-FRA-MISFIRE-002", "category": "Risk & Compliance", "status": "approved" },
+    { "id": "TEXC10", "title": "Incident Report", "code": "TEXC-SMS-FRM-013", "category": "Statements", "status": "approved" },
+    { "id": "TEXC11", "title": "Timing Variation Activity Statement", "code": "TEXC-SVF-FRM-001", "category": "Statements", "status": "approved" },
+    { "id": "TEXC12", "title": "Misfire Report", "code": "", "category": "Reports", "status": "draft" }
+  ]
+}

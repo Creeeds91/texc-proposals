@@ -1,0 +1,14 @@
+{
+  "_about": "TEXC's Current Project Workflow, stage titles and opening sentences verbatim from texc/documents/build/templates/current-project-workflow.html (converted from documents/originals/Current Project Workflow - Google Docs.pdf). The source is 'Draft — not approved' (texc/documents/register.md), so the proposal shows this diagram only when a proposal switches it on, and the switch stays off by default until TEXC approves it (open item C21). Which suite document belongs to which stage is also C21 and is not drawn.",
+  "intro": "Every blasting project follows a structured process to ensure explosives remain fully accounted for from the moment they leave the magazine until the project is complete.",
+  "stages": [
+    { "n": 1, "title": "Magazine Inventory", "line": "The process begins at the explosives magazine." },
+    { "n": 2, "title": "Transfer Note / Manifest", "line": "The explosives are then transferred onto a Transfer Note (Manifest)." },
+    { "n": 3, "title": "Site Risk Assessment", "line": "Before any explosives are loaded, a project-specific Risk Assessment is completed." },
+    { "n": 4, "title": "Charging Operations", "line": "Explosives are loaded into the blast in accordance with the blast design and project requirements." },
+    { "n": 5, "title": "Transfer Note Reconciliation", "line": "Once charging has been completed, the Transfer Note is reconciled." },
+    { "n": 6, "title": "Magazine Inventory Reconciliation", "line": "Any unused explosives or accessories are returned to the magazine." },
+    { "n": 7, "title": "Blast Monitoring", "line": "The blast is fired." },
+    { "n": 8, "title": "Blast Report", "line": "The final Blast Report is then prepared." }
+  ]
+}

@@ -1,0 +1,7 @@
+scripts/
+docs/
+templates/
+content/
+supabase/
+demo-out/
+*.md
