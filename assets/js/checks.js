@@ -13,6 +13,7 @@
  * ctx: { today: 'YYYY-MM-DD', services: [{slug, pending}], register: [{id, status}], brand: 'name',
  *        files: { <attachment id>: { status } } }   the files on this proposal, when known
  *        (the editor and the server both pass them; without them only "has a file" is checked)
+ *        accepted: { rev, name, acceptedAt } | null   the current revision's acceptance, if any
  */
 import { SECTIONS, SECTION_OF_KEY, visibleSections, isConfirm } from './schema.js';
 import { scanText, localityWarning } from './sensitive.js';
@@ -188,6 +189,11 @@ export function runChecks(cfg = {}, ctx = {}) {
     const section = SECTION_OF_KEY[String(used.path || '').split('.')[0]] || 'cover';
     if (!visible.has(section)) continue;
     needAck(`preset:${used.id}:${used.path}`, section, used.confirm, used.name);
+  }
+
+  // A revision published after acceptance must be accepted again; say so before it goes.
+  if (ctx.accepted && ctx.accepted.rev) {
+    needAck(`reaccept:${ctx.accepted.rev}`, 'accept', `Revision ${ctx.accepted.rev} was accepted by ${ctx.accepted.name}. Publishing a new revision asks the client to accept again; the acceptance of ${ctx.accepted.rev} stays on record.`, 'Re-acceptance');
   }
 
   // 7. Worth knowing.

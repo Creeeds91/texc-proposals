@@ -14,7 +14,7 @@
  * Decryption is assets/js/envelope-client.js, the other half of lib/envelope.js;
  * `check.mjs envelope` proves the two agree.
  */
-import { applyConfig, initEffects, whenImagesReady, setHooks } from './proposal.js';
+import { applyConfig, initEffects, whenImagesReady, setHooks, setAcceptance } from './proposal.js';
 import { openEnvelope as open, supported } from './envelope-client.js';
 
 const D = document;
@@ -101,8 +101,10 @@ async function present(data, opened) {
   state.cfg = cfg;
   const media = await Promise.race([signedMedia(), new Promise((d) => setTimeout(() => d(null), 2500))]);
   state.media = media;
+  setAcceptance(null);
   applyConfig(withMedia(cfg, media));
   if (cfg.media && !media) signedMedia().then((m) => { if (m) { state.media = m; applyConfig(withMedia(cfg, m)); } });
+  acceptanceStatus().then((st) => { if (st) setAcceptance(st); });
   revisionLinks(data);
   D.getElementById('gate').hidden = true;
   ROOT.classList.add('unlocked');
@@ -110,6 +112,22 @@ async function present(data, opened) {
   initEffects(D);
   ROOT.classList.add('ready');
   post('/api/view', {}, true).catch(() => {});
+}
+
+/** Is this revision accepted, can it be, was an earlier one? (After unlocking: it needs the view token.) */
+async function acceptanceStatus() {
+  try {
+    const r = await post('/api/accept', { action: 'status' });
+    return r.ok ? r.json() : null;
+  } catch { return null; }
+}
+
+/** POST, answering { status, json } whatever happens, so the page can say what went wrong. */
+async function send(path, payload) {
+  const r = await post(path, payload);
+  let json = {};
+  try { json = await r.json(); } catch { json = {}; }
+  return { status: r.status, json };
 }
 
 async function switchTo(rev, href) {
@@ -174,6 +192,9 @@ async function boot() {
       const m = await signedMedia();
       if (m) { state.media = m; applyConfig(withMedia(state.cfg, m)); }
     },
+    // Acceptance: the server checks the fingerprint of the exact bytes this page decrypted.
+    accept: (payload) => send('/api/accept', { action: 'accept', plaintextSha256: state.plaintextSha256, ...payload }),
+    requestChanges: (payload) => send('/api/changes', payload),
     // A document: a fresh 60-second link for each open or download (the server records which).
     attachment: async (id, { download = false } = {}) => {
       const r = await post('/api/attachment', { id, download });

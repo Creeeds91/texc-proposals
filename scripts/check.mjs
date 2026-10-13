@@ -20,6 +20,8 @@
  *   schema        supabase/schema.sql stands up twice, locks down, keeps its promises   (Postgres + Docker)
  *   envelope      server encryption opens with the browser's own code    (browser)
  *   refusals      every bad client request gets the identical 410; staff endpoints refuse strangers   (stack)
+ *   acceptance    accepting through the API: refusals, form problems, a tampered total, 20 at once,
+ *                 the stored record, emails, re-acceptance, staff-recorded, request changes   (stack)
  *   editor        the editor against the real stack: edits, rows, CONFIRM, upload,
  *                 checklist, server autosave, a colleague's conflicting save, phone   (stack + browser)
  *   flow          staff to client: publish, unlock, revise, supersede, rotate, approve a person   (stack + browser)
@@ -46,7 +48,7 @@ import { runChecks } from '../assets/js/checks.js';
 import { scanText, localityWarning } from '../assets/js/sensitive.js';
 import { inspectPdf } from '../lib/pdf-inspect.js';
 import { FIXTURES as PDF_FIXTURES } from './lib/pdf-fixtures.mjs';
-import { suiteSchema, suiteEnvelope, suiteRefusals, suiteEditor, suiteFlow, closeServerSuites } from './lib/server-suites.mjs';
+import { suiteSchema, suiteEnvelope, suiteRefusals, suiteAcceptance, suiteEditor, suiteFlow, closeServerSuites } from './lib/server-suites.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (p) => readFileSync(resolve(ROOT, p), 'utf8');
@@ -75,7 +77,7 @@ const REQUIRED_IDS = ['main', 'topbar', 'pbar', 'index', 'sheet', 'flt', 'supers
 const REQUIRED_FIELDS = ['documentTitle', 'meta.project', 'meta.docTypeLabel', 'meta.siteLine', 'meta.reference', 'meta.revLabel', 'meta.issueDateText', 'meta.validUntilText', 'meta.statusLabel', 'meta.footerLine', 'client.company', 'client.contactLine', 'letter.greetingName', 'quote.subtotalText', 'quote.gstText', 'quote.totalText', 'accept.clause'];
 const REQUIRED_IMGS = ['cover.image', 'letter.portrait', 'understanding.sitePlan', 'contact.photo'];
 const REQUIRED_ROWS = ['understanding.photos', 'scope.services', 'scope.matrix', 'site.meta', 'site.constraints', 'method.steps', 'risk.hazards', 'risk.holdPoints', 'docs.items', 'team.people'];
-const REQUIRED_HOOKS = ['data-quote-lines', 'data-quote-terms', 'data-params', 'data-workflow', 'data-timeline', 'data-attachments', 'data-accept-form', 'data-print', 'data-index-list', 'data-sheet-list', 'data-status-chip', 'data-secnum'];
+const REQUIRED_HOOKS = ['data-quote-lines', 'data-quote-terms', 'data-params', 'data-workflow', 'data-timeline', 'data-attachments', 'data-accept-form', 'data-accept-done', 'data-accept-banner', 'data-changes-form', 'data-sig-canvas', 'data-sig-draw', 'data-sig-type', 'data-print', 'data-index-list', 'data-sheet-list', 'data-status-chip', 'data-secnum'];
 
 function contractProblems(html) {
   const problems = [];
@@ -350,6 +352,10 @@ function suiteRules() {
   expect(runChecks(onRequest, ctx).blockers.length === 0, 'documents listed "on request" were asked for files');
   const hidden = clone(demo); hidden.layout.sections.find((x) => x.id === 'attachments').on = false;
   expect(runChecks(hidden, ctx).blockers.length === 0, 'a hidden attachments section still asked for files');
+  // Publishing over an accepted revision asks for an acknowledgement, tied to that revision.
+  const reacc = runChecks({ ...clone(filed), acks: d.acks.map((x) => x.key) }, { ...fctx('clean'), accepted: { rev: 'A', name: 'Sam Whitlock', acceptedAt: '2026-10-14T00:00:00Z' } });
+  expect(!reacc.ready && reacc.acks.some((x) => x.key === 'reaccept:A' && !x.done), 'publishing over an accepted revision did not ask for an acknowledgement');
+  expect(runChecks({ ...clone(filed), acks: [...d.acks.map((x) => x.key), 'reaccept:A'] }, { ...fctx('clean'), accepted: { rev: 'A', name: 'Sam Whitlock' } }).ready, 'acknowledging the re-acceptance did not clear it');
   const twin = withFiles(clone(demo)); twin.attachments[1].id = twin.attachments[0].id;
   expect(runChecks(twin, fctx('clean')).blockers.some((b) => /damaged/.test(b.message)), 'two cards with the same id did not block');
 
@@ -660,7 +666,7 @@ const SUITES = {
   contract: suiteContract, brand: suiteBrand, csp: suiteCsp, conventions: suiteConventions, quote: suiteQuote,
   design: suiteDesign, rules: suiteRules, attachments: suiteAttachments,
   confirm: suiteConfirm, render: suiteRender, print: suitePrint, 'content-sync': suiteContentSync,
-  schema: suiteSchema, envelope: () => suiteEnvelope({ browserSession }), refusals: suiteRefusals, editor: suiteEditor, flow: suiteFlow,
+  schema: suiteSchema, envelope: () => suiteEnvelope({ browserSession }), refusals: suiteRefusals, acceptance: suiteAcceptance, editor: suiteEditor, flow: suiteFlow,
 };
 
 const wanted = args.filter((a) => !a.startsWith('--'));

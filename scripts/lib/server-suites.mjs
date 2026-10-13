@@ -15,6 +15,7 @@
  * browser ones need Playwright; without them a suite reports NOT CHECKED.
  */
 import { readFileSync, existsSync, mkdirSync, readdirSync } from 'node:fs';
+import { deflateSync, crc32 as zlibCrc32 } from 'node:zlib';
 import { spawnSync } from 'node:child_process';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -170,12 +171,22 @@ export async function suiteEnvelope({ browserSession }) {
 
 /* ------------------------------------------------------------ refusals */
 
+// One signed-in API client for the checks account, shared by the API suites:
+// sign-in codes are limited per address, as in production.
+let checkStaffClient = null;
+async function checkStaff(a) {
+  if (checkStaffClient) return checkStaffClient;
+  const c = client(a);
+  await c.signIn(a.CHECK_EMAIL);
+  checkStaffClient = c;
+  return c;
+}
+
 export async function suiteRefusals() {
   const a = await app();
   if (!a) return skipNoStack();
   const fails = [];
-  const staff = client(a);
-  await staff.signIn(a.CHECK_EMAIL);
+  const staff = await checkStaff(a);
   const live = await demoProposal(staff);
   const withdrawn = await demoProposal(staff);
   await staff.call('POST', '/api/proposals', { action: 'withdraw', id: withdrawn.id, note: 'check' });
@@ -398,6 +409,181 @@ export async function suiteRefusals() {
     'safety unlocks: editors refused, administrators stamped by the server, the unlocked publish completes and is audited',
     'a withdrawn proposal comes back only through an administrator, behind a new link; six wrong codes kill the real one',
     'cross-site POST refused with a valid session; a viewer cannot open proposals for editing',
+  ] };
+}
+
+/* ------------------------------------------------------------ acceptance */
+
+/** A real PNG of w×h, as a canvas would make one: a dark stroke on white. */
+function pngOf(w, h) {
+  const row = (y) => Buffer.concat([Buffer.from([0]), Buffer.alloc(w * 3, 0xff).map((v, i) => (Math.abs(y - h / 2) < 3 && i % 3 === 0 && i > w / 2 ? 0x11 : v))]);
+  const raw = Buffer.concat(Array.from({ length: h }, (_, y) => row(y)));
+  const chunk = (type, data) => {
+    const len = Buffer.alloc(4); len.writeUInt32BE(data.length);
+    const crc = Buffer.alloc(4); crc.writeUInt32BE(zlibCrc32(Buffer.concat([Buffer.from(type, 'latin1'), data])) >>> 0);
+    return Buffer.concat([len, Buffer.from(type, 'latin1'), data, crc]);
+  };
+  const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(w, 0); ihdr.writeUInt32BE(h, 4); ihdr[8] = 8; ihdr[9] = 2;
+  return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk('IHDR', ihdr), chunk('IDAT', deflateSync(raw)), chunk('IEND', Buffer.alloc(0))]);
+}
+
+/**
+ * Acceptance through the API, as a client page and the office would drive it:
+ * the uniform refusals, form problems, a tampered total, twenty simultaneous
+ * acceptances, the stored record and its fingerprint, the emails, re-acceptance
+ * after a new revision, drawn and typed signatures, a staff-recorded
+ * acceptance, and requests for changes.
+ */
+export async function suiteAcceptance() {
+  const a = await app();
+  if (!a) return skipNoStack();
+  const fails = [];
+  const expect = (cond, what) => { if (!cond) fails.push(what); };
+  const { psql } = await import('./local-supabase.mjs');
+  const q = (sql) => psql(a.sb.conn, sql);
+  const staff = await checkStaff(a);
+  const anon = client(a);
+  const zero = '0'.repeat(64);
+  const revOf = (id, label) => JSON.parse(q(`select row_to_json(r)::text from (select published_text, plaintext_sha256 from public.texc_proposal_revisions where proposal_id = '${id}' ${label ? `and rev_label = '${label}'` : ''} order by rev_index desc limit 1) r`));
+  const facts = (p, label) => { const r = revOf(p.id, label); return { vt: JSON.parse(r.published_text).__vt, sha: r.plaintext_sha256 }; };
+  const person = { name: 'Sam Whitlock', position: 'Project Manager', company: 'Ashgrove Civil Pty Ltd', email: 'sam.whitlock@example.com' };
+  const { quoteTotals } = await import('../../assets/js/money.js');
+  const totalOf = (opts = []) => quoteTotals(DEMO.quote.lines, opts).total;
+  const accept = (c, p, extra = {}, f = facts(p)) => c.call('POST', '/api/accept', {
+    slug: p.slug, t: p.t, vt: f.vt, action: 'accept', ...person, authority: true, accept: true, typed: person.name,
+    options: [], totalCents: totalOf(), plaintextSha256: f.sha, session: 'check-session', ...extra,
+  });
+  const goneBody = '{"error":"gone"}';
+
+  // 1. Refusals: the same 410 for every way a request can be wrong.
+  const live = await demoProposal(staff);
+  const lf = facts(live);
+  const st0 = await anon.call('POST', '/api/accept', { slug: live.slug, t: live.t, vt: lf.vt, action: 'status' });
+  expect(st0.status === 200 && st0.json.open === true && st0.json.accepted === null && st0.json.earlier === null, `status before acceptance: ${st0.text}`);
+  for (const [name, payload] of [
+    ['a wrong token', { t: zero }], ['a wrong view token', { vt: zero }], ['bytes other than the published ones', { plaintextSha256: zero }],
+    ['a malformed slug', { slug: '../x' }], ['an earlier revision that does not exist', { rev: 'Q' }],
+  ]) {
+    const r = await accept(anon, live, payload);
+    expect(r.status === 410 && r.text === goneBody, `${name}: answered ${r.status} ${r.text.slice(0, 80)}`);
+  }
+  const noAction = await anon.call('POST', '/api/accept', { slug: live.slug, t: live.t, vt: lf.vt });
+  expect(noAction.status === 410, `a request with no action answered ${noAction.status}`);
+
+  // 2. Form problems name the fields; a tampered total is refused; nothing is written.
+  const prob = async (extra, field) => {
+    const r = await accept(client(a), live, extra);
+    expect(r.status === 422 && (r.json.fields || []).includes(field), `expected a 422 naming ${field}, got ${r.status} ${r.text.slice(0, 120)}`);
+  };
+  await prob({ name: '' }, 'name');
+  await prob({ email: 'not-an-email' }, 'email');
+  await prob({ authority: false }, 'authority');
+  await prob({ accept: 'yes' }, 'accept');
+  await prob({ typed: 'Someone Else' }, 'typed');
+  await prob({ typed: '', drawn: '' }, 'signature');
+  await prob({ typed: '', drawn: Buffer.from('GIF89a not a png at all').toString('base64') }, 'drawn');
+  await prob({ options: ['l1'] }, 'options');
+  const tampered = await accept(client(a), live, { totalCents: 100 });
+  expect(tampered.status === 409 && tampered.json.error === 'total' && tampered.json.totalCents === totalOf(), `a tampered total answered ${tampered.status} ${tampered.text}`);
+  expect(q(`select count(*) from public.texc_acceptances where proposal_id = '${live.id}'`) === '0', 'a refused acceptance wrote something');
+
+  // 3. Twenty at once: exactly one acceptance; the rest get it back.
+  const mailBefore = a.outbox().length;
+  const opts = DEMO.quote.lines.filter((l) => l.optional).map((l) => l.id);
+  const race = await Promise.all(Array.from({ length: 20 }, () => accept(client(a), live, { options: opts, totalCents: totalOf(opts) })));
+  const won = race.filter((r) => r.status === 200 && r.json.accepted === true);
+  const again = race.filter((r) => r.status === 200 && r.json.already === true);
+  expect(won.length === 1 && again.length === 19 && again.every((r) => r.json.acceptance && r.json.acceptance.id === won[0].json.acceptance.id),
+    `20 simultaneous acceptances: ${won.length} won, ${again.length} told who won (${race.map((r) => r.status).join(',')})`);
+  const row = JSON.parse(q(`select row_to_json(x)::text from (select id, kind, name, options, accepted_total_cents, signature_kind, plaintext_sha256, record_path, record_sha256 from public.texc_acceptances where proposal_id = '${live.id}') x`) || 'null');
+  expect(row && row.kind === 'client' && row.signature_kind === 'typed' && row.accepted_total_cents === totalOf(opts) && JSON.stringify(row.options) === JSON.stringify(opts) && row.plaintext_sha256 === lf.sha,
+    `the acceptance row is not what was accepted: ${JSON.stringify(row)}`);
+  const st1 = await anon.call('POST', '/api/accept', { slug: live.slug, t: live.t, vt: lf.vt, action: 'status' });
+  expect(st1.json.accepted && st1.json.accepted.name === person.name && st1.json.open === false, `status after acceptance: ${st1.text}`);
+  const sent = a.outbox().slice(mailBefore);
+  const office = sent.filter((m) => m.to.includes('office@example.com') && /^Accepted:/.test(m.subject));
+  const mine = sent.filter((m) => m.to.includes(person.email));
+  expect(office.length === 1 && mine.length === 1, `emails after acceptance: ${office.length} to the office, ${mine.length} to the person (expected one each)`);
+  expect(mine[0] && /Next: HP2 — Site preparation/.test(mine[0].text) && /does not constitute unconditional authority/.test(mine[0].text), 'the acceptance email does not carry the HP1 framing and the next hold point, as the revision words them');
+
+  // 4. The stored record: staff only, fingerprint checked, its own strict policy.
+  const recNoSession = await anon.call('GET', `/staff/acceptance/${row.id}`);
+  expect(recNoSession.status === 302 && /^\/signin\?next=%2Fstaff%2Facceptance%2F/.test(recNoSession.headers.get('location') || ''), `the record without a session answered ${recNoSession.status} ${recNoSession.headers.get('location')}`);
+  const rec = await staff.call('GET', `/staff/acceptance/${row.id}`);
+  const { RECORD_CSP } = await import('../../lib/acceptance-record.js');
+  expect(rec.status === 200 && rec.headers.get('content-security-policy') === RECORD_CSP && sha256(Buffer.from(rec.text, 'utf8')) === row.record_sha256
+    && rec.text.includes(person.name) && rec.text.includes(lf.sha) && !/<script/i.test(rec.text), `the record page: ${rec.status}, policy ${rec.headers.get('content-security-policy') === RECORD_CSP}`);
+  const sum = (await staff.call('GET', `/api/proposals?id=${live.id}`)).json;
+  expect(sum.acceptances && sum.acceptances.length === 1 && sum.acceptances[0].current && sum.acceptances[0].rev === 'A', `the staff summary does not show the acceptance: ${JSON.stringify(sum.acceptances)}`);
+
+  // 5. A new revision after acceptance: the old one stays accepted and can no longer be accepted; the new one must be.
+  const dr = (await staff.call('GET', `/api/drafts?id=${live.id}`)).json;
+  dr.config.meta.project = `${dr.config.meta.project} (revised)`;
+  let put = await staff.call('PUT', '/api/drafts', { id: live.id, version: dr.version, config: dr.config });
+  const unacked = await staff.call('POST', '/api/proposals', { action: 'publish', id: live.id, version: put.json.version });
+  expect(unacked.status === 422 && JSON.stringify(unacked.json).includes('reaccept:A'), `publishing over an accepted revision without acknowledging it answered ${unacked.status}`);
+  put = await staff.call('PUT', '/api/drafts', { id: live.id, version: put.json.version, config: { ...dr.config, acks: [...(dr.config.acks || []), 'reaccept:A'] } });
+  const pubB = await staff.call('POST', '/api/proposals', { action: 'publish', id: live.id, version: put.json.version });
+  const fb = facts(live, 'B');
+  const stB = await anon.call('POST', '/api/accept', { slug: live.slug, t: live.t, vt: fb.vt, action: 'status' });
+  const stA = await anon.call('POST', '/api/accept', { slug: live.slug, t: live.t, vt: lf.vt, rev: 'A', action: 'status' });
+  expect(pubB.status === 200 && stB.json.open === true && stB.json.earlier && stB.json.earlier.rev === 'A' && stA.json.accepted && stA.json.open === false,
+    `after Rev B: B ${stB.text}, A ${stA.text}`);
+  const onA = await accept(client(a), live, { rev: 'A' }, lf);
+  const onAasCurrent = await accept(client(a), live, {}, lf);
+  expect(onA.status === 410 && onAasCurrent.status === 410, `accepting the superseded revision answered ${onA.status} / ${onAasCurrent.status}`);
+  const drawn = pngOf(600, 180);
+  const onB = await accept(client(a), live, { typed: '', drawn: drawn.toString('base64') }, fb);
+  const rowB = JSON.parse(q(`select row_to_json(x)::text from (select signature_kind, signature_path from public.texc_acceptances a join public.texc_proposal_revisions r on r.id = a.revision_id where r.proposal_id = '${live.id}' and r.rev_label = 'B') x`) || 'null');
+  expect(onB.status === 200 && onB.json.accepted && rowB && rowB.signature_kind === 'drawn' && /-signature\.png$/.test(rowB.signature_path || ''), `a drawn signature on Rev B: ${onB.status} ${JSON.stringify(rowB)}`);
+
+  // 6. A proposal that allows only a typed signature refuses a drawn one.
+  const typedOnly = await demoProposal(staff, { mutate: (c) => { c.accept = { signature: 'typed' }; } });
+  const r6 = await accept(client(a), typedOnly, { drawn: drawn.toString('base64') });
+  expect(r6.status === 422 && r6.json.fields.includes('drawn'), `a drawn signature where only typed is allowed answered ${r6.status} ${r6.text}`);
+
+  // 7. Withdrawn: refused like any dead link.
+  const wd = await demoProposal(staff);
+  await staff.call('POST', '/api/proposals', { action: 'withdraw', id: wd.id, note: 'check' });
+  const r7 = await accept(client(a), wd);
+  expect(r7.status === 410 && r7.text === goneBody, `accepting a withdrawn proposal answered ${r7.status}`);
+
+  // 8. Recorded by staff: administrators only, with a note; once; audited; its record says so.
+  const rec8 = await demoProposal(staff);
+  const edEmail = 'editor.accept@example.com';
+  await anon.call('POST', '/api/auth?action=code', { email: edEmail });
+  await staff.call('POST', '/api/people', { email: edEmail, status: 'active', role: 'editor' });
+  const ed = client(a);
+  await ed.signIn(edEmail);
+  const byEditor = await ed.call('POST', '/api/proposals', { action: 'record-acceptance', id: rec8.id, name: 'Sam Whitlock', note: 'Signed PDF returned by email.' });
+  const noNote = await staff.call('POST', '/api/proposals', { action: 'record-acceptance', id: rec8.id, name: 'Sam Whitlock', note: 'ok' });
+  const byAdmin = await staff.call('POST', '/api/proposals', { action: 'record-acceptance', id: rec8.id, name: 'Sam Whitlock', position: 'Project Manager', note: 'Signed PDF of Rev A returned by email on 14 October.' });
+  const twice = await staff.call('POST', '/api/proposals', { action: 'record-acceptance', id: rec8.id, name: 'Sam Whitlock', note: 'Signed PDF returned by email again.' });
+  const audit8 = q(`select count(*) from public.texc_staff_audit where proposal_id = '${rec8.id}' and action = 'acceptance_recorded'`);
+  const page8 = byAdmin.status === 200 ? await staff.call('GET', `/staff/acceptance/${byAdmin.json.id}`) : null;
+  expect(byEditor.status === 403 && noNote.status === 400 && byAdmin.status === 200 && twice.status === 409 && audit8 === '1' && page8 && /Recorded by staff/.test(page8.text),
+    `staff-recorded acceptance: editor ${byEditor.status}, no note ${noNote.status}, admin ${byAdmin.status}, again ${twice.status}, audit ${audit8}`);
+  const r8 = await accept(client(a), rec8);
+  expect(r8.status === 200 && r8.json.already === true && r8.json.acceptance.kind === 'staff', `a client accepting after staff recorded it answered ${r8.status} ${r8.text.slice(0, 100)}`);
+
+  // 9. Requests for changes: logged and sent; nothing is claimed.
+  const ch = await demoProposal(staff);
+  const cf = facts(ch);
+  const mail9 = a.outbox().length;
+  const asked = await client(a).call('POST', '/api/changes', { slug: ch.slug, t: ch.t, vt: cf.vt, name: person.name, email: person.email, message: 'Could the start move to the week of 2 November?\nAlso please add a second shotfirer for the first week.' });
+  const badAsk = await client(a).call('POST', '/api/changes', { slug: ch.slug, t: ch.t, vt: cf.vt, name: person.name, email: person.email, message: '' });
+  const goneAsk = await client(a).call('POST', '/api/changes', { slug: ch.slug, t: ch.t, vt: zero, name: person.name, email: person.email, message: 'Hello there' });
+  const logged = q(`select meta->>'message' from public.texc_events where proposal_id = '${ch.id}' and event = 'changes_requested'`);
+  const officeAsk = a.outbox().slice(mail9).filter((m) => /^Changes requested:/.test(m.subject));
+  expect(asked.status === 200 && badAsk.status === 422 && goneAsk.status === 410 && /second shotfirer/.test(logged) && officeAsk.length === 1
+    && q(`select count(*) from public.texc_acceptances where proposal_id = '${ch.id}'`) === '0', `request changes: ${asked.status}, empty ${badAsk.status}, wrong view token ${goneAsk.status}, logged ${!!logged}, emailed ${officeAsk.length}`);
+
+  return fails.length ? { status: FAIL, detail: fails } : { status: PASS, detail: [
+    'every bad link, wrong view token or wrong fingerprint gets the uniform 410; form problems name their fields; a tampered total is refused and nothing is written',
+    '20 simultaneous acceptances: exactly one written, 19 told who accepted; the office and the person are emailed once, with the revision\'s own HP1 framing and HP2',
+    'the stored record is staff-only, matches its fingerprint and runs under its own strict policy',
+    'publishing over an accepted revision needs acknowledging; after Rev B the accepted Rev A stays accepted and cannot be accepted again; Rev B accepts with a drawn signature; typed-only proposals refuse a drawn one; withdrawn ones refuse all',
+    'staff-recorded acceptance: administrators only, with a note, once, audited, and a client then gets it back; requests for changes are logged and sent, claiming nothing',
   ] };
 }
 
@@ -713,11 +899,46 @@ export async function suiteFlow() {
   const docEvents = psql(a.sb.conn, `select string_agg(event || ':' || (meta->>'card'), ',' order by id) from public.texc_events where proposal_id = '${id}' and event in ('attachment_opened', 'attachment_downloaded')`);
   expect(docEvents === 'attachment_opened:a1,attachment_opened:a1,attachment_downloaded:a2', `document events recorded as "${docEvents}"`);
 
+  // Acceptance on the phone: the form asks for what is missing; then an optional
+  // item, a drawn signature, accepted; the quotation locks to what was accepted.
+  await cp.evaluate(() => document.getElementById('accept').scrollIntoView());
+  await cp.waitForFunction(() => performance.getEntriesByType('resource').some((e) => /\/assets\/js\/signature\.js$/.test(e.name)), null, { timeout: 10000 });
+  await cp.waitForTimeout(300);
+  await cp.click('[data-accept-go]');
+  const firstTry = await cp.evaluate(() => ({ note: document.querySelector('[data-accept-note]').textContent, marked: document.querySelectorAll('[data-accept-form] [aria-invalid="true"], [data-accept-form] [data-invalid="true"]').length }));
+  expect(/marked|Sign/.test(firstTry.note) && firstTry.marked >= 2, `an incomplete acceptance did not say what was missing (${JSON.stringify(firstTry)})`);
+  const prefilled = await cp.inputValue('[data-accept-form] [name="name"]');
+  expect(prefilled === 'Sam Whitlock', `the name was not prefilled from the proposal (${prefilled})`);
+  await cp.check('#quote [data-option="o1"]');
+  await cp.evaluate(() => document.getElementById('accept').scrollIntoView());
+  await cp.fill('[data-accept-form] [name="email"]', 'sam.whitlock@example.com');
+  await cp.check('[data-accept-form] [name="authority"]');
+  await cp.check('[data-accept-form] [name="accept"]');
+  const pad = await cp.$eval('[data-sig-canvas]', (c) => { c.scrollIntoView({ block: 'center' }); const r = c.getBoundingClientRect(); return { x: r.left, y: r.top, w: r.width, h: r.height }; });
+  await cp.mouse.move(pad.x + pad.w * 0.15, pad.y + pad.h * 0.6);
+  await cp.mouse.down();
+  for (let i = 1; i <= 24; i += 1) await cp.mouse.move(pad.x + pad.w * (0.15 + i * 0.028), pad.y + pad.h * (0.6 - 0.25 * Math.sin(i / 3)));
+  await cp.mouse.up();
+  await cp.click('[data-accept-go]');
+  await cp.waitForSelector('[data-accept-done]:not([hidden])', { timeout: 20000 });
+  const done = await cp.evaluate(() => ({ by: document.querySelector('[data-done-by]').textContent, total: document.querySelector('[data-done-total]').textContent,
+    locked: document.querySelector('#quote [data-option="o1"]').disabled && document.querySelector('#quote [data-option="o1"]').checked, form: document.querySelector('[data-accept-form]').hidden }));
+  const { psql: sql } = await import('./local-supabase.mjs');
+  const row = JSON.parse(sql(a.sb.conn, `select row_to_json(x)::text from (select signature_kind, options, accepted_total_cents from public.texc_acceptances where proposal_id = '${id}') x`) || 'null');
+  expect(done.by === 'Sam Whitlock, Project Manager, Ashgrove Civil Pty Ltd' && done.locked && done.form && row && row.signature_kind === 'drawn' && JSON.stringify(row.options) === '["o1"]',
+    `accepting on the phone: ${JSON.stringify(done)} ${JSON.stringify(row)}`);
+  await cp.goto(link);
+  await cp.fill('#gate-pass', pass);
+  await cp.click('#gate-go');
+  await cp.waitForSelector('[data-accept-done]:not([hidden])', { timeout: 15000 });
+  expect(await cp.evaluate(() => document.querySelector('[data-accept-form]').hidden && document.querySelector('#quote [data-option="o1"]').disabled), 'reopening an accepted proposal did not show it as accepted');
+
   const fp = await cp.evaluate(() => window.proposalFingerprint());
   expect(/^[a-f0-9]{64}$/.test(fp), 'the plaintext fingerprint was not kept for acceptance');
   await page.waitForTimeout(400);
   const summary = await page.evaluate(async (pid) => (await fetch(`/api/proposals?id=${pid}`)).json(), id);
-  expect(summary.openCount === 1 && a.outbox().some((m) => m.subject.startsWith('Opened:')), `the open was not recorded or the office not told (${summary.openCount})`);
+  // Opened twice (before and after accepting); the office is told about the first open only.
+  expect(summary.openCount === 2 && a.outbox().filter((m) => m.subject.startsWith('Opened:') && m.text.includes(summary.reference)).length === 1, `the opens were not counted, or the office not told exactly once (${summary.openCount})`);
 
   // Revise: same link, Rev B; Rev A still opens, marked superseded.
   const why = async (what) => { const seen = await page.evaluate(() => ({ saved: document.getElementById('ed-saved').textContent, dialogs: [...document.querySelectorAll('dialog[open]')].map((d) => d.textContent.slice(0, 300)) })); return new Error(`${what}: ${JSON.stringify(seen)}`); };
@@ -727,6 +948,10 @@ export async function suiteFlow() {
   await page.click('#ed-check');
   await page.waitForFunction(() => [...document.querySelectorAll('dialog .ed-ck')].some((s) => /Changes since/.test(s.textContent) && /Cover/.test(s.textContent)), null, { timeout: 10000 }).catch(async () => { throw await why('the checklist did not list the change'); });
   await page.fill('#ck-note', 'Stage 2 named in the title');
+  // Rev A was accepted: publishing Rev B says so and needs acknowledging first.
+  const reacc = await page.$$eval('dialog .ed-ack', (n) => n.map((x) => x.textContent).filter((t) => /was accepted by/.test(t)));
+  expect(reacc.length === 1 && await page.isDisabled('#ck-publish'), `publishing over the accepted Rev A was not held for an acknowledgement (${reacc.length})`);
+  for (const box of await page.$$('dialog .ed-ack input')) await box.check();
   await page.click('#ck-publish');
   await page.waitForSelector('dialog h2:has-text("Rev B")', { timeout: 30000 });
   expect(!(await page.$$eval('dialog .ed-secret code', (c) => c.map((x) => x.textContent))).includes(pass), 'a later revision showed the passphrase again (it should only on first issue)');
@@ -736,9 +961,13 @@ export async function suiteFlow() {
   await cp.click('#gate-go');
   await cp.waitForFunction(() => document.documentElement.classList.contains('unlocked'), null, { timeout: 15000 });
   expect((await cp.textContent('[data-field="meta.revLabel"]')).includes('B') && /Stage 2/.test(await cp.textContent('.cover-title')), 'the same link did not open Rev B');
+  await cp.waitForSelector('[data-accept-banner]:not([hidden])', { timeout: 10000 });
+  expect(/Revised after acceptance — re-acceptance required/.test(await cp.textContent('[data-accept-banner]')) && await cp.isVisible('[data-accept-form]')
+    && !(await cp.isDisabled('#quote [data-option="o1"]')), 'Rev B did not ask to be accepted again, or kept Rev A\'s locked quotation');
   await cp.click('[data-revision-links] a:has-text("Rev A")');
   await cp.waitForFunction(() => !document.getElementById('superseded').hidden, null, { timeout: 15000 });
   expect(!/Stage 2/.test(await cp.textContent('.cover-title')), 'Rev A did not show its own content');
+  await cp.waitForSelector('[data-accept-done]:not([hidden])', { timeout: 10000 });
 
   // Rotate: the old link dies at once.
   page.once('dialog', (d) => d.accept());
@@ -769,7 +998,8 @@ export async function suiteFlow() {
     `staff sign in, publish from the checklist, link emailed without the passphrase; client unlocks at 390 in ${unlockMs} ms`,
     'an uploaded cover reaches the client through a one-hour signed link from the private bucket',
     `documents: ${usedSuite ? `${firstDoc.id} as issued` : `a built PDF with scripts (no sibling checkout or poppler, so not ${firstDoc.id})`} refused, its flattened copy passes; on a phone the client's viewer draws the pages, opens a new tab on the file, downloads another under the proposal's reference, all recorded`,
-    'the open is recorded and the office told; Rev B behind the same link; Rev A opens marked superseded',
+    'on the phone the client is told what is missing, ticks an optional item, draws a signature and accepts; the quotation locks to what was accepted, and stays so on reopening',
+    'the open is recorded and the office told; Rev B needs the acceptance of Rev A acknowledged, then asks the client to accept again; Rev A opens superseded and still accepted',
     'rotation kills the old link at once; an access request reaches admins, is approved, and the person is emailed',
   ] };
 }

@@ -484,6 +484,117 @@ create table if not exists public.texc_attachments (
 );
 create index if not exists texc_attachments_proposal on public.texc_attachments (proposal_id);
 
+-- ---------------------------------------------------------------- acceptance (Phase 5)
+
+-- Which revision was last accepted, and when. Appended (column order is load-bearing).
+alter table public.texc_proposals add column if not exists accepted_at timestamptz;
+alter table public.texc_proposals add column if not exists accepted_revision_id uuid references public.texc_proposal_revisions (id);
+
+-- One acceptance per revision, kept exactly as given. Append-only.
+--   client  the client accepted on the page: both confirmations, a signature,
+--           and the SHA-256 of the exact bytes they decrypted, which must equal
+--           the revision's — proof they accepted what was published
+--   staff   recorded by an administrator for an acceptance received another
+--           way (a signed PDF, an email), with a note saying how
+-- The record (record_path) is the acceptance as an HTML page, rendered and
+-- stored at the moment of acceptance; record_sha256 fingerprints it.
+create table if not exists public.texc_acceptances (
+  id                   uuid primary key,
+  proposal_id          uuid not null references public.texc_proposals (id),
+  revision_id          uuid not null unique references public.texc_proposal_revisions (id),
+  kind                 text not null check (kind in ('client', 'staff')),
+  accepted_at          timestamptz not null,
+  name                 text not null check (length(name) between 1 and 160),
+  position             text not null default '',
+  company              text not null default '',
+  email                text not null default '',
+  authority_confirmed  boolean not null default false,
+  terms_confirmed      boolean not null default false,
+  terms_version        text,
+  clauses              jsonb not null default '{}'::jsonb,
+  signature_kind       text not null default 'none' check (signature_kind in ('drawn', 'typed', 'drawn+typed', 'none')),
+  signature_path       text,
+  signature_sha256     text check (signature_sha256 is null or signature_sha256 ~ '^[a-f0-9]{64}$'),
+  typed_signature      text,
+  options              jsonb not null default '[]'::jsonb,
+  accepted_total_cents bigint,
+  totals               jsonb not null default '{}'::jsonb,
+  plaintext_sha256     text check (plaintext_sha256 is null or plaintext_sha256 ~ '^[a-f0-9]{64}$'),
+  enc_sha256           text check (enc_sha256 is null or enc_sha256 ~ '^[a-f0-9]{64}$'),
+  ip_hash              text,
+  ua_family            text not null default '',
+  session              text,
+  recorded_by          text,
+  staff_note           text,
+  record_path          text not null,
+  record_sha256        text not null check (record_sha256 ~ '^[a-f0-9]{64}$'),
+  created_at           timestamptz not null default now(),
+  check ((kind = 'client' and authority_confirmed and terms_confirmed and plaintext_sha256 is not null and signature_kind <> 'none')
+      or (kind = 'staff' and recorded_by is not null and length(coalesce(staff_note, '')) >= 10))
+);
+create index if not exists texc_acceptances_proposal on public.texc_acceptances (proposal_id);
+drop trigger if exists texc_acceptances_append_only on public.texc_acceptances;
+create trigger texc_acceptances_append_only before update or delete on public.texc_acceptances
+  for each row execute function public.texc_refuse_change();
+drop trigger if exists texc_acceptances_no_truncate on public.texc_acceptances;
+create trigger texc_acceptances_no_truncate before truncate on public.texc_acceptances
+  for each statement execute function public.texc_refuse_change();
+
+-- Accept a revision, all or nothing, with the proposal row locked — so of any
+-- number of simultaneous attempts exactly one is written and the rest are told
+-- who accepted it ({ won: false, … }), the same answer as a second tap gets.
+-- Only the current revision of an issued proposal can be accepted, never a
+-- superseded or withdrawn one; a client must still hold a live link and must
+-- name the exact bytes that were published. The caller has already stored the
+-- signature and the record at the paths it passes.
+create or replace function public.texc_accept(p jsonb)
+returns jsonb language plpgsql security definer set search_path = '' as $$
+declare
+  prop public.texc_proposals%rowtype;
+  rev public.texc_proposal_revisions%rowtype;
+  had public.texc_acceptances%rowtype;
+  is_client boolean := p->>'kind' = 'client';
+begin
+  select * into prop from public.texc_proposals where id = (p->>'proposal_id')::uuid for update;
+  if not found then raise exception 'no such proposal' using errcode = 'PT404'; end if;
+  select * into rev from public.texc_proposal_revisions where id = (p->>'revision_id')::uuid and proposal_id = prop.id;
+  if not found then raise exception 'no such revision' using errcode = 'PT404'; end if;
+  select * into had from public.texc_acceptances where revision_id = rev.id;
+  if found then
+    return jsonb_build_object('won', false, 'id', had.id, 'accepted_at', had.accepted_at, 'name', had.name, 'kind', had.kind);
+  end if;
+  if prop.status <> 'issued' or prop.current_revision_id is distinct from rev.id or rev.superseded_at is not null or rev.withdrawn_at is not null then
+    raise exception 'conflict: this revision is not open for acceptance' using errcode = 'PT409';
+  end if;
+  if is_client and prop.link_expires_at is not null and prop.link_expires_at <= now() then
+    raise exception 'conflict: the link has expired' using errcode = 'PT409';
+  end if;
+  if is_client and rev.plaintext_sha256 is distinct from p->>'plaintext_sha256' then
+    raise exception 'conflict: not the published text' using errcode = 'PT409';
+  end if;
+
+  insert into public.texc_acceptances
+    (id, proposal_id, revision_id, kind, accepted_at, name, position, company, email, authority_confirmed, terms_confirmed,
+     terms_version, clauses, signature_kind, signature_path, signature_sha256, typed_signature, options, accepted_total_cents,
+     totals, plaintext_sha256, enc_sha256, ip_hash, ua_family, session, recorded_by, staff_note, record_path, record_sha256)
+  values
+    ((p->>'id')::uuid, prop.id, rev.id, p->>'kind', (p->>'accepted_at')::timestamptz, p->>'name', coalesce(p->>'position', ''),
+     coalesce(p->>'company', ''), coalesce(p->>'email', ''), coalesce((p->>'authority_confirmed')::boolean, false),
+     coalesce((p->>'terms_confirmed')::boolean, false), nullif(p->>'terms_version', ''), coalesce(p->'clauses', '{}'::jsonb),
+     coalesce(p->>'signature_kind', 'none'), nullif(p->>'signature_path', ''), nullif(p->>'signature_sha256', ''),
+     nullif(p->>'typed_signature', ''), coalesce(p->'options', '[]'::jsonb), (p->>'accepted_total_cents')::bigint,
+     coalesce(p->'totals', '{}'::jsonb), case when is_client then rev.plaintext_sha256 end, rev.enc_sha256,
+     left(p->>'ip_hash', 32), left(coalesce(p->>'ua_family', ''), 60), left(p->>'session', 64),
+     nullif(p->>'recorded_by', ''), nullif(p->>'staff_note', ''), p->>'record_path', p->>'record_sha256');
+
+  update public.texc_proposals set accepted_at = (p->>'accepted_at')::timestamptz, accepted_revision_id = rev.id where id = prop.id;
+  insert into public.texc_events (proposal_id, revision_id, event, session, actor, meta)
+  values (prop.id, rev.id, case when is_client then 'accepted' else 'acceptance_recorded' end, left(p->>'session', 64),
+          case when is_client then null else p->>'recorded_by' end,
+          jsonb_build_object('acceptance', p->>'id', 'rev', rev.rev_label, 'total_cents', (p->>'accepted_total_cents')::bigint));
+  return jsonb_build_object('won', true, 'id', p->>'id', 'accepted_at', p->>'accepted_at', 'name', p->>'name', 'kind', p->>'kind');
+end $$;
+
 -- ---------------------------------------------------------------- locked down from birth
 
 do $$
@@ -491,7 +602,7 @@ declare t text;
 begin
   foreach t in array array['texc_users', 'texc_login_tokens', 'texc_user_sessions', 'texc_proposals',
     'texc_proposal_revisions', 'texc_revision_keys', 'texc_drafts', 'texc_events', 'texc_proposal_views',
-    'texc_settings', 'texc_counters', 'texc_rate_limits', 'texc_staff_audit', 'texc_attachments'] loop
+    'texc_settings', 'texc_counters', 'texc_rate_limits', 'texc_staff_audit', 'texc_attachments', 'texc_acceptances'] loop
     execute format('alter table public.%I enable row level security', t);
     execute format('revoke all on table public.%I from anon, authenticated', t);
     execute format('grant all on table public.%I to service_role', t);
@@ -503,7 +614,7 @@ declare f text;
 begin
   foreach f in array array['texc_touch_updated_at()', 'texc_refuse_change()', 'texc_revisions_guard()',
     'texc_rate_hit(text, integer, integer)', 'texc_claim_reference(uuid, text)', 'texc_publish(jsonb)',
-    'texc_rotate(jsonb)', 'texc_withdraw(uuid, text, text)', 'texc_record_view(jsonb)'] loop
+    'texc_rotate(jsonb)', 'texc_withdraw(uuid, text, text)', 'texc_record_view(jsonb)', 'texc_accept(jsonb)'] loop
     execute format('revoke execute on function public.%s from public, anon, authenticated', f);
     execute format('grant execute on function public.%s to service_role', f);
   end loop;

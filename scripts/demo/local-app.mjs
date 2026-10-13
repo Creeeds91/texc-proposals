@@ -49,6 +49,8 @@ const readAll = (req) => new Promise((done) => { const c = []; req.on('data', (x
 /** Vercel's Node helpers, enough for api/*: req.query, req.body, res.status/json/send. */
 function vercelify(req, res, query, raw) {
   req.query = query;
+  // Vercel always passes the caller's address; locally it is the socket's (a test may set its own).
+  if (!req.headers['x-forwarded-for'] && req.socket && req.socket.remoteAddress) req.headers['x-forwarded-for'] = req.socket.remoteAddress;
   const type = String(req.headers['content-type'] || '').split(';')[0].trim();
   if (!raw.length) req.body = undefined;
   else if (type === 'application/json') { try { req.body = JSON.parse(raw.toString('utf8')); } catch { req.body = raw.toString('utf8'); } }

@@ -149,9 +149,13 @@ const ctx = {
   async refreshProposal() {
     if (!PROPOSAL_ID) return;
     const r = await api('GET', `/api/proposals?id=${PROPOSAL_ID}`);
-    if (r.ok) { state.proposal = r.json; renderStatus(); schedulePreview(); }
+    if (r.ok) { state.proposal = r.json; renderStatus(); schedulePreview(); scheduleBadges(); }
   },
-  checkCtx: () => ({ today: today(), services: TPL.services, register: TPL.register, brand: BRAND.name, files: filesContext() }),
+  checkCtx: () => {
+    const a = state.proposal && (state.proposal.acceptances || []).find((x) => x.current);
+    return { today: today(), services: TPL.services, register: TPL.register, brand: BRAND.name, files: filesContext(),
+      accepted: a ? { rev: a.rev, name: a.name, acceptedAt: a.acceptedAt } : null };
+  },
   reveal(section, field) {
     state.open.add(section);
     renderDrawer();
@@ -333,6 +337,17 @@ function renderStatus() {
   if (p.url && p.status === 'issued') {
     el.append(h('button', { type: 'button', class: 'ed-linkbtn', onclick: () => copy(p.url, 'Client link copied') }, ' Copy link'));
   }
+  // Acceptance: the latest one, and whether the current revision still needs it.
+  const accepted = (p.acceptances || []).at(-1);
+  if (accepted) {
+    const day = new Date(accepted.acceptedAt).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', timeZone: 'Australia/Hobart' });
+    const line = h('span', { class: `ed-accepted${accepted.current ? '' : ' is-stale'}` }, icon(accepted.current ? 'check-circle' : 'alert-triangle'),
+      h('span', { text: accepted.current
+        ? `Accepted by ${accepted.name}, ${day}${accepted.kind === 'staff' ? ' (recorded by staff)' : ''}`
+        : `Rev ${accepted.rev} accepted ${day}; Rev ${current ? current.label : ''} awaits acceptance` }),
+      h('a', { class: 'ed-linkbtn', href: `/staff/acceptance/${accepted.id}`, target: '_blank', rel: 'noopener' }, 'Record'));
+    el.append(h('br'), line);
+  }
 }
 
 async function copy(text, done) {
@@ -485,6 +500,7 @@ function menu() {
       const r = await adminAction('withdraw', 'Withdraw it? The client link will stop working. Publishing again issues a new revision behind the same link.');
       if (r) toast('Withdrawn. The link no longer opens.');
     }) : null,
+    admin && issued && !(p.acceptances || []).some((x) => x.current) ? item('Record an acceptance received another way', 'file-check', () => recordAcceptance()) : null,
     admin ? item('People', 'users', () => openPeople(ctx)) : null,
     item('Sign out', 'arrow-left', async () => { await saver.flush(); await api('POST', '/api/auth?action=signout'); location.assign('/signin'); }),
     h('p', { class: 'ed-hint', text: state.who ? `Signed in as ${state.who.email} (${{ super: 'Brand in Black', admin: 'administrator', editor: 'editor', viewer: 'viewer' }[state.who.role] || state.who.role}).` : '' }),
@@ -494,13 +510,46 @@ function menu() {
   dlg.showModal();
 }
 
+/** An administrator records an acceptance that came by email or on paper, with a note saying how. */
+function recordAcceptance() {
+  const p = state.proposal;
+  const current = (p.revisions || []).find((r) => r.current);
+  const c = state.cfg.client || {};
+  const field = (name, label, value = '', type = 'text') => {
+    const id = `ra-${name}`;
+    const input = name === 'note'
+      ? h('textarea', { id, class: 'ed-input ed-area', rows: 3, maxlength: 500, placeholder: 'e.g. Signed PDF of Rev A returned by email on 14 October' })
+      : h('input', { id, class: 'ed-input', type, value: typeof value === 'string' ? value : '', autocomplete: 'off', maxlength: 200 });
+    return h('div', { class: 'ed-field' }, h('label', { class: 'ed-label', for: id, text: label }), input);
+  };
+  const err = h('p', { class: 'ed-error', role: 'alert' });
+  const dlg = dialog(`Record an acceptance of Rev ${current ? current.label : ''}`,
+    h('p', { class: 'ed-hint ed-block', text: `For an acceptance that reached ${BRAND.name} another way — a signed PDF, an email. It is recorded with your name and your note, the client's page shows the proposal as accepted, and it cannot be undone.` }),
+    field('name', 'Who accepted it (full name)', c.contactName),
+    field('position', 'Their position', c.contactPosition),
+    field('company', 'Company', c.company),
+    field('email', 'Their email (optional)', c.email, 'email'),
+    field('note', 'How it was received'),
+    err,
+    h('div', { class: 'ed-dialog-foot' },
+      h('button', { type: 'button', class: 'btn btn--primary btn--sm', id: 'ra-go', onclick: async () => {
+        const v = (k) => D.getElementById(`ra-${k}`).value.trim();
+        const r = await api('POST', '/api/proposals', { action: 'record-acceptance', id: PROPOSAL_ID, name: v('name'), position: v('position'), company: v('company'), email: v('email'), note: v('note') });
+        if (!r.ok) { err.textContent = (r.json && r.json.error) || 'It could not be recorded.'; return; }
+        dlg.close();
+        await ctx.refreshProposal();
+        toast(`Acceptance of Rev ${r.json.rev} recorded.`);
+      } }, 'Record the acceptance')));
+  dlg.classList.add('ed-dialog--wide');
+}
+
 function buildShell() {
   const drawer = h('aside', { id: 'ed', class: 'ed', 'aria-label': 'Proposal editor' },
     h('div', { class: 'ed-top' },
       h('div', { class: 'ed-brand' }, h('img', { src: BRAND.logoGold, alt: BRAND.name, width: 72, height: 28 }), h('span', { text: 'Editor' })),
       h('div', { class: 'ed-top-actions' },
         h('button', { type: 'button', class: 'btn btn--secondary btn--sm', id: 'ed-menu', onclick: menu }, icon('menu'), h('span', { text: 'Menu' })),
-        h('button', { type: 'button', class: 'btn btn--primary btn--sm', id: 'ed-check', onclick: () => openChecklist(ctx) }, icon('file-check'), h('span', { text: 'Checklist' }), h('span', { class: 'ed-count-pill', id: 'ed-check-count' })))),
+        h('button', { type: 'button', class: 'btn btn--primary btn--sm', id: 'ed-check', onclick: async () => { await ctx.refreshProposal(); openChecklist(ctx); } }, icon('file-check'), h('span', { text: 'Checklist' }), h('span', { class: 'ed-count-pill', id: 'ed-check-count' })))),
     h('p', { class: 'ed-status', id: 'ed-status' }),
     h('p', { class: 'ed-saved', id: 'ed-saved', role: 'status', 'aria-live': 'polite', text: '' }),
     h('div', { class: 'ed-panels', id: 'ed-panels' }),

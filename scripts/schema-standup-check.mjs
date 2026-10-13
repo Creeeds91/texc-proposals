@@ -21,7 +21,7 @@
 import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
-import { randomBytes, createHash } from 'node:crypto';
+import crypto, { randomBytes, createHash } from 'node:crypto';
 import { startLocalSupabase, psql } from './lib/local-supabase.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -29,12 +29,12 @@ const SCHEMA = resolve(ROOT, 'supabase/schema.sql');
 
 export const TABLES = ['texc_users', 'texc_login_tokens', 'texc_user_sessions', 'texc_proposals', 'texc_proposal_revisions',
   'texc_revision_keys', 'texc_drafts', 'texc_events', 'texc_proposal_views', 'texc_settings', 'texc_counters',
-  'texc_rate_limits', 'texc_staff_audit', 'texc_attachments'];
+  'texc_rate_limits', 'texc_staff_audit', 'texc_attachments', 'texc_acceptances'];
 const RPCS = {
   texc_rate_hit: { p_key: 'x', p_max: 1, p_window_seconds: 60 },
   texc_claim_reference: { p_proposal: '00000000-0000-0000-0000-000000000000', p_prefix: 'X' },
   texc_publish: { p: {} }, texc_rotate: { p: {} }, texc_withdraw: { p_proposal: '00000000-0000-0000-0000-000000000000', p_actor: 'x', p_note: '' },
-  texc_record_view: { p: {} },
+  texc_record_view: { p: {} }, texc_accept: { p: {} },
 };
 
 const hex = (n) => randomBytes(n).toString('hex');
@@ -197,6 +197,35 @@ export async function runSchemaProof({ log = () => {} } = {}) {
     const v2 = await rpc('texc_record_view', { p: { proposal_id: pid, revision_id: revs.json[1].id, session: 's2' } });
     const opened = await rest('GET', `texc_proposals?id=eq.${pid}&select=open_count,first_opened_at`);
     ok('the first open is reported once and counted', v1.json.first === true && v2.json.first === false && opened.json[0].open_count === 2 && opened.json[0].first_opened_at, [v1.json, v2.json, opened.json]);
+    log('Acceptance: one per revision, only the current one, only what was published');
+    const acc = (rev, extra = {}) => ({
+      id: crypto.randomUUID(), proposal_id: pid, revision_id: rev, kind: 'client', accepted_at: new Date().toISOString(),
+      name: 'Proof Person', position: 'Manager', company: 'Proof Pty Ltd', email: 'proof@example.com',
+      authority_confirmed: true, terms_confirmed: true, signature_kind: 'typed', typed_signature: 'Proof Person',
+      options: [], accepted_total_cents: 100, plaintext_sha256: sha('p2'), record_path: 'proposals/x/acceptances/y-record.html', record_sha256: sha('record'),
+      ...extra,
+    });
+    const onA = await rpc('texc_accept', { p: acc(revs.json[0].id, { plaintext_sha256: sha('p1') }) });
+    ok('a superseded revision cannot be accepted', !onA.ok && /not open/.test(onA.text), onA.text);
+    const wrongText = await rpc('texc_accept', { p: acc(revs.json[1].id, { plaintext_sha256: sha('something else') }) });
+    ok('an acceptance naming bytes other than the published ones is refused', !wrongText.ok && /published text/.test(wrongText.text), wrongText.text);
+    const unsigned = await rpc('texc_accept', { p: acc(revs.json[1].id, { signature_kind: 'none' }) });
+    ok('a client acceptance without a signature is refused by the database', !unsigned.ok, unsigned.text);
+    const race = await Promise.all(Array.from({ length: 20 }, () => rpc('texc_accept', { p: acc(revs.json[1].id) })));
+    const winners = race.filter((r) => r.ok && r.json.won === true);
+    const losers = race.filter((r) => r.ok && r.json.won === false);
+    ok('20 simultaneous acceptances: exactly one is written, the other 19 are told who won', winners.length === 1 && losers.length === 19
+      && losers.every((r) => r.json.id === winners[0].json.id) && q(`select count(*) from public.texc_acceptances where revision_id = '${revs.json[1].id}'`) === '1',
+      race.map((r) => (r.ok ? r.json.won : r.status)));
+    const accepted = await rest('GET', `texc_proposals?id=eq.${pid}&select=accepted_at,accepted_revision_id`);
+    const accEvents = q(`select count(*) from public.texc_events where proposal_id = '${pid}' and event = 'accepted'`);
+    ok('the proposal records the accepted revision, and the acceptance is logged once', accepted.json[0].accepted_revision_id === revs.json[1].id && accepted.json[0].accepted_at && accEvents === '1', [accepted.json, accEvents]);
+    const accEdit = await rest('PATCH', `texc_acceptances?revision_id=eq.${revs.json[1].id}`, { name: 'Someone Else' });
+    const accDel = await rest('DELETE', `texc_acceptances?revision_id=eq.${revs.json[1].id}`);
+    ok('an acceptance cannot be changed or deleted', !accEdit.ok && !accDel.ok, [accEdit.status, accDel.status]);
+    const staffNoNote = await rpc('texc_accept', { p: acc(revs.json[1].id, { kind: 'staff', recorded_by: 'proof', staff_note: '' }) });
+    ok('a second acceptance of the same revision, even by staff, gets the first one back', staffNoNote.ok && staffNoNote.json.won === false, staffNoNote.text);
+
     const wd = await rpc('texc_withdraw', { p_proposal: pid, p_actor: 'proof', p_note: 'sent in error' });
     const wrev = await rest('GET', `texc_proposal_revisions?id=eq.${revs.json[1].id}&select=withdrawn_at`);
     const wprop = await rest('GET', `texc_proposals?id=eq.${pid}&select=status`);

@@ -9,11 +9,14 @@
  *   POST { action: 'withdraw', id, note }       (admin)
  *   POST { action: 'rotate', id }               (admin) new link and passphrase
  *   POST { action: 'passphrase', id }           (admin) read back, audited
+ *   POST { action: 'record-acceptance', id, name, position, company, email, note }
+ *                                               (admin) an acceptance received another way, audited
  */
 import { db, rest } from '../lib/db.js';
 import { body, refuseCrossSite, onlyMethods, noStore } from '../lib/http.js';
 import { requireRole, atLeast } from '../lib/accounts.js';
 import { createProposal, publish, withdraw, rotate, readPassphrase, summary, changesSince } from '../lib/proposals.js';
+import { staffAccept } from '../lib/acceptances.js';
 import { UUID_RE } from '../lib/tokens.js';
 import { rateLimited, tooMany } from '../lib/ratelimit.js';
 
@@ -74,6 +77,13 @@ export default async function handler(req, res) {
     return;
   }
   if (action === 'withdraw') { if (!admin()) return; answer(await withdraw(d, req, who, id, b.note)); return; }
+  if (action === 'record-acceptance') {
+    if (!admin()) return;
+    if (await rateLimited(d, req, `record-acceptance:${who.email}`, 10, 3600)) { tooMany(res); return; }
+    const out = await staffAccept(d, req, who, id, b);
+    res.status(out.status).json(out.json);
+    return;
+  }
   if (action === 'rotate') {
     if (!admin()) return;
     if (await rateLimited(d, req, `rotate:${who.email}`, 5, 3600)) { tooMany(res); return; }

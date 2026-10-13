@@ -21,6 +21,7 @@
  */
 import { BASES, quoteTotals, lineAmountCents, formatAUD, formatQty } from './money.js';
 import { PINNED_FIRST, PINNED_LAST, DEFAULT_OFF, DOC_TYPES, STATUS, isConfirm } from './schema.js';
+import { acceptClause, signatureMode, sameName, EMAIL_RE, LIMITS } from './acceptance.js';
 
 const D = document;
 const ROOT = D.documentElement;
@@ -324,13 +325,16 @@ function deriveView(cfg) {
   if (!contact.photo && TPL.principalPhoto) contact.photo = { id: TPL.principalPhoto, alt: `Portrait of ${BRAND.principalName || ''}`.trim() };
 
   // Acceptance wording adapts while no terms exist rather than citing a version
-  // that is not there (open question Q7).
+  // that is not there (open question Q7). Shared with the server's record.
   const terms = (v.terms = v.terms || {});
-  const termsVersion = str(terms.version);
   v.accept = v.accept || {};
-  v.accept.clause = termsVersion && present(terms.body)
-    ? `I accept the quotation, terms (version ${termsVersion}) and preliminary risk assessment.`
-    : 'I accept the quotation and preliminary risk assessment.';
+  v.accept.clause = acceptClause(terms);
+  // What acceptance means for the hold points, named from this proposal's own list (never a fixed range).
+  const codes = list(v.risk && v.risk.holdPoints).map((h) => str(h.code).trim().toUpperCase()).filter(Boolean);
+  const later = codes.filter((c) => c !== 'HP1');
+  const until = later.length ? ` No blasting proceeds until ${later.length === 1 ? `hold point ${later[0]} is` : `hold points ${later[0]} to ${later[later.length - 1]} are`} met.` : '';
+  v.accept.holdNote = `${codes.includes('HP1') ? 'Hold point HP1. ' : ''}Planning and site preparation can begin once this is accepted.${until}`;
+  v.accept.holdMet = `${codes.includes('HP1') ? 'Hold point HP1 is met.' : ''}${until}`.trim();
 
   computeQuote(v);
   return v;
@@ -549,6 +553,7 @@ function renderQuote(v) {
       const box = el('input');
       box.type = 'checkbox';
       box.checked = state.options.has(line.id);
+      box.disabled = state.optionsLocked === true;
       box.dataset.option = str(line.id);
       lab.append(box, el('span', 'opt-box'), el('span', 'opt-text', str(line.desc)), el('span', 'opt-tag', 'Optional'));
       desc.append(lab);
@@ -749,6 +754,7 @@ export function applyConfig(cfg) {
   renderTimeline(v);
   renderQuote(v);
   renderAttachments(v);
+  renderAcceptMode(v);
   renderStatus(v);
   bindHides(v);
   applyLayout(v);
@@ -897,25 +903,9 @@ export function initEffects(root = D) {
     window.print();
   }));
 
-  // Acceptance — Phase 5 wires the server. Until a proposal is issued (it then
-  // carries a view token) the form validates and says plainly that it is a preview.
-  const form = D.querySelector('[data-accept-form]');
-  const note = D.querySelector('[data-accept-note]');
-  if (form) form.addEventListener('submit', (e) => {
-    e.preventDefault();
-    const bad = [...form.querySelectorAll('[required]')].find((n) => (n.type === 'checkbox' ? !n.checked : !n.value.trim()) || (n.type === 'email' && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(n.value)));
-    if (bad) {
-      note.textContent = 'Please complete every field and both confirmations.';
-      note.dataset.tone = 'error';
-      bad.focus();
-      return;
-    }
-    note.dataset.tone = 'info';
-    // Phase 5 sends the acceptance. Until then an issued proposal says how to accept instead.
-    note.textContent = hooks.issued === true
-      ? `Online acceptance is not switched on for this proposal yet. To accept, email ${BRAND.email} or call ${BRAND.principalName} on ${BRAND.phoneDisplay}.`
-      : 'Preview only — online acceptance opens when this proposal is issued.';
-  });
+  // Acceptance and requests for changes (below). The gate sends them; in the
+  // editor and the demo the form validates and says plainly that it is a preview.
+  initAcceptance();
 
   // Documents. View opens the viewer (assets/js/pdf-viewer.js, loaded on first
   // use); Download saves the file without leaving the page. Each asks whoever
@@ -950,6 +940,225 @@ export function initEffects(root = D) {
 
   state.effects = { observe, watchSections };
   return state.effects;
+}
+
+/* -------------------------------------------------------------- acceptance */
+
+const acc = { pad: null, padLoading: null, mode: 'both', status: null };
+const hobartWhen = (iso) => new Intl.DateTimeFormat('en-AU', { timeZone: 'Australia/Hobart', dateStyle: 'full', timeStyle: 'short' }).format(new Date(iso));
+const callUs = () => `call ${BRAND.principalName} on ${BRAND.phoneDisplay}`;
+
+/** Which signature the proposal asks for (accept.signature): drawn or typed, typed only, or drawn only. */
+function renderAcceptMode(v) {
+  const mode = signatureMode(v.accept);
+  acc.mode = mode;
+  const draw = D.querySelector('[data-sig-draw]');
+  const type = D.querySelector('[data-sig-type]');
+  const hint = D.querySelector('[data-sig-hint]');
+  if (!draw || !type || !hint) return;
+  draw.hidden = mode === 'typed';
+  type.hidden = mode === 'drawn';
+  hint.textContent = mode === 'both' ? 'Draw your signature, or type your full name. Either is enough.'
+    : mode === 'typed' ? 'Type your full name, exactly as above.' : 'Draw your signature with a finger, stylus or mouse.';
+  type.querySelector('.field-label').textContent = mode === 'both' ? 'Or type your full name' : 'Type your full name';
+}
+
+/** The signature pad (assets/js/signature.js) loads as the acceptance comes near. */
+function loadPad() {
+  if (acc.padLoading) return acc.padLoading;
+  const canvas = D.querySelector('[data-sig-canvas]');
+  if (!canvas) return Promise.resolve(null);
+  acc.padLoading = import('./signature.js')
+    .then((m) => { acc.pad = m.attachPad(canvas, { onChange: () => { delete canvas.closest('[data-sig-draw]').dataset.invalid; } }); return acc.pad; })
+    .catch(() => { acc.padLoading = null; return null; });
+  return acc.padLoading;
+}
+
+function defaultOptions() {
+  return new Set(list(state.view.quote && state.view.quote.lines).filter((l) => l.optional && l.optionalDefault).map((l) => l.id));
+}
+
+/** Lock (or release) the quotation's optional items, e.g. to what was accepted. */
+function lockOptions(locked, options) {
+  state.optionsLocked = locked;
+  if (options) state.options = new Set(options);
+  D.querySelectorAll('[data-option]').forEach((b) => { b.checked = state.options.has(b.dataset.option); b.disabled = locked; });
+  refreshQuote();
+}
+
+/**
+ * What the server says about this revision's acceptance (the gate asks after
+ * unlocking): { accepted, open, earlier }. null = unknown (editor, demo).
+ */
+export function setAcceptance(status) {
+  acc.status = status || null;
+  const form = D.querySelector('[data-accept-form]');
+  const done = D.querySelector('[data-accept-done]');
+  const banner = D.querySelector('[data-accept-banner]');
+  const changes = D.querySelector('[data-changes-form]');
+  if (!form || !done || !banner) return;
+  banner.hidden = true;
+  banner.removeAttribute('data-tone');
+  const a = status && status.accepted;
+  if (a) {
+    form.hidden = true;
+    if (changes) changes.hidden = true;
+    done.hidden = false;
+    done.querySelector('[data-done-label]').textContent = a.kind === 'staff' ? `Accepted — recorded by ${BRAND.name}` : 'Accepted';
+    done.querySelector('[data-done-by]').textContent = [a.name, a.position, a.company].filter(Boolean).join(', ');
+    done.querySelector('[data-done-when]').textContent = hobartWhen(a.acceptedAt);
+    const names = list(state.view.quote && state.view.quote.lines).filter((l) => l.optional && (a.options || []).includes(l.id)).map((l) => str(l.desc));
+    done.querySelector('[data-done-options]').textContent = names.length ? names.join('; ') : 'None selected';
+    done.querySelector('[data-done-total]').textContent = a.totalText || '—';
+    lockOptions(true, a.options || []);
+    return;
+  }
+  done.hidden = true;
+  if (state.optionsLocked) lockOptions(false, defaultOptions());
+  if (status && status.open === false) {
+    form.hidden = true;
+    if (changes) changes.hidden = true;
+    banner.hidden = false;
+    banner.dataset.tone = 'info';
+    banner.textContent = 'This is an earlier revision, kept for reference. Only the current revision can be accepted.';
+    return;
+  }
+  form.hidden = false;
+  if (status && status.earlier) {
+    banner.hidden = false;
+    banner.textContent = `Revised after acceptance — re-acceptance required. Revision ${status.earlier.rev} was accepted on ${hobartWhen(status.earlier.acceptedAt)}; this revision needs accepting again.`;
+  }
+}
+
+function initAcceptance() {
+  const form = D.querySelector('[data-accept-form]');
+  if (!form) return;
+  const note = form.querySelector('[data-accept-note]');
+  const canvas = form.querySelector('[data-sig-canvas]');
+  const say = (el, tone, text) => { el.dataset.tone = tone; el.textContent = text; };
+  if ('IntersectionObserver' in window) {
+    const io = new IntersectionObserver((es) => { if (es.some((e) => e.isIntersecting)) { loadPad(); io.disconnect(); } }, { rootMargin: '900px 0px' });
+    io.observe(form);
+  } else loadPad();
+  if (canvas) canvas.addEventListener('pointerenter', () => loadPad(), { once: true });
+  form.querySelector('[data-sig-clear]')?.addEventListener('click', async () => { const pad = await loadPad(); if (pad) pad.clear(); });
+  form.addEventListener('input', (e) => { if (e.target.removeAttribute) e.target.removeAttribute('aria-invalid'); });
+  form.addEventListener('change', (e) => { const c = e.target.closest && e.target.closest('.check'); if (c) delete c.dataset.invalid; });
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const val = (n) => String(form.elements[n].value || '').trim();
+    const flagged = [];
+    const mark = (name) => {
+      if (name === 'drawn' || name === 'signature') {
+        const pad = form.querySelector('[data-sig-draw]');
+        if (pad && !pad.hidden) { pad.dataset.invalid = 'true'; flagged.push(canvas); }
+        if (name === 'signature' && !form.querySelector('[data-sig-type]').hidden) mark('typed');
+        return;
+      }
+      const field = form.elements[name];
+      if (!field) return;
+      if (field.type === 'checkbox') field.closest('.check').dataset.invalid = 'true';
+      else field.setAttribute('aria-invalid', 'true');
+      flagged.push(field);
+    };
+    if (val('name').length < 2) mark('name');
+    if (!val('position')) mark('position');
+    if (!val('company')) mark('company');
+    if (!EMAIL_RE.test(val('email'))) mark('email');
+    if (!form.elements.authority.checked) mark('authority');
+    if (!form.elements.accept.checked) mark('accept');
+    const pad = acc.mode === 'typed' ? null : (acc.pad || await loadPad());
+    const drawn = !!(pad && !pad.isEmpty());
+    const typed = acc.mode === 'drawn' ? '' : val('typed');
+    let why = '';
+    if (typed && !sameName(typed, val('name'))) { mark('typed'); why = 'The typed signature must be your full name, exactly as entered above.'; }
+    else if (acc.mode === 'typed' && !typed) { mark('typed'); why = 'Type your full name to sign.'; }
+    else if (acc.mode === 'drawn' && !drawn) { mark('drawn'); why = 'Draw your signature to sign.'; }
+    else if (acc.mode === 'both' && !typed && !drawn) { mark('signature'); why = 'Sign by drawing your signature or typing your full name.'; }
+    const missing = flagged.some((f) => f !== canvas && f.name !== 'typed');
+    if (missing || why) {
+      say(note, 'error', [missing ? 'Please complete every field and both confirmations; the ones still needed are marked.' : '', why].filter(Boolean).join(' '));
+      if (flagged[0]) flagged[0].focus();
+      return;
+    }
+    if (typeof hooks.accept !== 'function') {
+      say(note, 'info', 'Preview only — online acceptance opens when this proposal is issued.');
+      return;
+    }
+    const go = form.querySelector('[data-accept-go]');
+    go.disabled = true;
+    go.textContent = 'Accepting…';
+    say(note, 'info', '');
+    const totals = state.view.quote && state.view.quote.totals;
+    let out;
+    try {
+      out = await hooks.accept({
+        name: val('name'), position: val('position'), company: val('company'), email: val('email'), authority: true, accept: true,
+        typed, drawn: drawn ? pad.toPngBase64() : '', options: [...state.options], totalCents: totals ? totals.total : null,
+      });
+    } catch { out = { status: 0, json: {} }; }
+    go.disabled = false;
+    go.textContent = 'Accept proposal';
+    const j = out.json || {};
+    if ((j.accepted || j.already) && j.acceptance) {
+      setAcceptance({ accepted: j.acceptance, open: false });
+      const done = D.querySelector('[data-accept-done]');
+      if (done) done.focus();
+      return;
+    }
+    if (out.status === 422) {
+      (j.fields || []).forEach(mark);
+      say(note, 'error', 'Some details need checking. They are marked.');
+    } else if (out.status === 409 && j.error === 'total') {
+      say(note, 'error', `The total has changed since this page was opened (it is now ${j.totalText}). Reload the page to see the current figures, then accept.`);
+    } else if (out.status === 429) {
+      say(note, 'error', 'Too many attempts from this connection. Wait a few minutes and try again.');
+    } else if (out.status === 410) {
+      say(note, 'error', `This proposal can no longer be accepted from this page. Reload it, or ${callUs()}.`);
+    } else {
+      say(note, 'error', `The acceptance did not go through and nothing was recorded. Try again, or ${callUs()}.`);
+    }
+  });
+
+  // Request changes: a short message to the office instead of accepting.
+  const open = form.querySelector('[data-request-changes]');
+  const changes = D.querySelector('[data-changes-form]');
+  if (!open || !changes) return;
+  const cnote = changes.querySelector('[data-changes-note]');
+  const show = (on) => {
+    changes.hidden = !on;
+    open.setAttribute('aria-expanded', on ? 'true' : 'false');
+    if (!on) return;
+    for (const k of ['name', 'email']) if (!changes.elements[k].value) changes.elements[k].value = form.elements[k].value;
+    changes.scrollIntoView({ block: 'nearest' });
+    changes.elements.message.focus();
+  };
+  open.addEventListener('click', () => show(changes.hidden));
+  changes.querySelector('[data-changes-cancel]').addEventListener('click', () => { show(false); open.focus(); });
+  changes.addEventListener('input', (e) => { if (e.target.removeAttribute) e.target.removeAttribute('aria-invalid'); });
+  changes.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const val = (n) => String(changes.elements[n].value || '').trim();
+    const bad = [];
+    if (val('name').length < 2) bad.push('name');
+    if (!EMAIL_RE.test(val('email'))) bad.push('email');
+    if (val('message').length < 5) bad.push('message');
+    bad.forEach((n) => changes.elements[n].setAttribute('aria-invalid', 'true'));
+    if (bad.length) { say(cnote, 'error', 'Please give your name, an email address and what you would like changed.'); changes.elements[bad[0]].focus(); return; }
+    if (typeof hooks.requestChanges !== 'function') { say(cnote, 'info', 'Preview only — requests are sent from the issued proposal.'); return; }
+    const go = changes.querySelector('[data-changes-go]');
+    go.disabled = true;
+    let out;
+    try { out = await hooks.requestChanges({ name: val('name'), email: val('email'), message: changes.elements.message.value.slice(0, LIMITS.message) }); }
+    catch { out = { status: 0, json: {} }; }
+    go.disabled = false;
+    if (out.status === 200) {
+      changes.querySelectorAll('input, textarea, button[type="submit"]').forEach((n) => { n.disabled = true; });
+      say(cnote, 'info', `Sent. ${BRAND.principalName} will be in touch. This proposal stays open in the meantime.`);
+    } else if (out.status === 429) say(cnote, 'error', 'Too many requests from this connection. Wait a while, or email us instead.');
+    else say(cnote, 'error', `The request did not go through. Try again, or ${callUs()}.`);
+  });
 }
 
 /* -------------------------------------------------------------------- boot */

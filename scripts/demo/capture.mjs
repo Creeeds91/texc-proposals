@@ -15,11 +15,15 @@
  *   demo-out/phase3/*.png            sign-in, publishing, the gate, revisions, People   (local stack)
  *   demo-out/phase4/*.png            documents: attaching, the check's verdicts, release,
  *                                    the client's documents and viewer            (local stack)
+ *   demo-out/phase5/*.png            acceptance: the form, a request for changes, signing and
+ *                                    accepting on a phone, the record, the emails, re-acceptance,
+ *                                    an acceptance recorded by staff               (local stack)
  *
  *   node scripts/demo/capture.mjs              everything
  *   node scripts/demo/capture.mjs --editor     the editor captures only
  *   node scripts/demo/capture.mjs --phase3     the Phase 3 captures only
  *   node scripts/demo/capture.mjs --phase4     the Phase 4 captures only
+ *   node scripts/demo/capture.mjs --phase5     the Phase 5 captures only
  *
  * Section stills hide the fixed furniture (top bar, rail, back-to-top) so a
  * sticky bar is never stitched into the middle of a section; the arrival shots
@@ -469,6 +473,171 @@ async function phase4Stills() {
   return readdirSync(dir).length;
 }
 
+/**
+ * Phase 5, as people meet it: the client reads the acceptance on a desktop,
+ * asks for a change, then signs and accepts on a phone; the office gets the
+ * email and opens the record; the person accepting gets theirs; a revision
+ * after acceptance asks to be accepted again; an administrator records an
+ * acceptance that came by email.
+ */
+async function phase5Stills() {
+  const dir = resolve(OUT, 'phase5');
+  rmSync(dir, { recursive: true, force: true });
+  mkdirSync(dir, { recursive: true });
+  const shot = (page, name, opts = {}) => page.screenshot({ path: resolve(dir, name), ...opts });
+  const toAccept = (p) => p.evaluate(() => { document.documentElement.style.scrollBehavior = 'auto'; const s = document.getElementById('accept'); window.scrollTo(0, s.getBoundingClientRect().top + window.scrollY - 64); });
+  const toEl = (p, sel, gap = 140) => p.evaluate(([q, g]) => { const n = document.querySelector(q); window.scrollTo(0, n.getBoundingClientRect().top + window.scrollY - g); }, [sel, gap]);
+
+  let { ctx, page, a } = await signedIn(1440, 900, 1);
+  const id = await openDemo(page, a);
+  await attachTestFiles(page);
+  await page.click('#ed-check');
+  await page.waitForSelector('dialog .ed-verdict');
+  for (const box of await page.$$('dialog .ed-ack input')) await box.check();
+  await page.click('#ck-publish');
+  await page.waitForSelector('dialog h2:has-text("Published")', { timeout: 30000 });
+  const [link, pass] = await page.$$eval('dialog .ed-secret code', (c) => c.map((x) => x.textContent));
+  await page.click('dialog .ed-dialog-head button');
+
+  const unlock = async (width, height, scale) => {
+    const c = await browser.newContext({ ...AU, viewport: { width, height }, deviceScaleFactor: scale, reducedMotion: 'reduce' });
+    const p = await c.newPage();
+    await p.goto(link);
+    await p.fill('#gate-pass', pass);
+    await p.click('#gate-go');
+    await p.waitForFunction(() => document.documentElement.classList.contains('ready'), null, { timeout: 15000 });
+    await toAccept(p);
+    await p.waitForFunction(() => performance.getEntriesByType('resource').some((e) => /\/assets\/js\/signature\.js$/.test(e.name)), null, { timeout: 10000 });
+    await p.waitForTimeout(500);
+    return { c, p };
+  };
+
+  // The client, at a desk: the acceptance as it arrives, then incomplete, then a request for changes.
+  const desk = await unlock(1440, 900, 1);
+  await shot(desk.p, '1440-01-acceptance.png');
+  await desk.p.click('[data-accept-go]');
+  await desk.p.waitForTimeout(200);
+  await toEl(desk.p, '[data-accept-form] [name="email"]', 260);
+  await shot(desk.p, '1440-02-acceptance-incomplete.png');
+  await toEl(desk.p, '[data-accept-go]', 620);
+  await shot(desk.p, '1440-02b-acceptance-incomplete-message.png');
+  await desk.p.click('[data-request-changes]');
+  await desk.p.fill('[data-changes-form] [name="email"]', 'sam.whitlock@example.com');
+  await desk.p.fill('[data-changes-form] [name="message"]', 'Could the start move to the week of 2 November? Our earthworks contractor is not off site until 30 October.');
+  await desk.p.evaluate(() => document.querySelector('[data-changes-form]').scrollIntoView({ block: 'center' }));
+  await desk.p.waitForTimeout(200);
+  await shot(desk.p, '1440-03-request-changes.png');
+  await desk.p.click('[data-changes-go]');
+  await desk.p.waitForFunction(() => /Sent/.test(document.querySelector('[data-changes-note]').textContent));
+  await shot(desk.p, '1440-04-request-sent.png');
+
+  // The client, on a phone: the optional item, details, a drawn signature, accepted.
+  const phone = await unlock(390, 844, 2);
+  await phone.p.evaluate(() => document.querySelector('#quote [data-option="o1"]').scrollIntoView({ block: 'center' }));
+  await phone.p.check('#quote [data-option="o1"]');
+  await toAccept(phone.p);
+  await phone.p.fill('[data-accept-form] [name="email"]', 'sam.whitlock@example.com');
+  await phone.p.check('[data-accept-form] [name="authority"]');
+  await phone.p.check('[data-accept-form] [name="accept"]');
+  const pad = await phone.p.$eval('[data-sig-canvas]', (c) => { c.scrollIntoView({ block: 'center' }); const r = c.getBoundingClientRect(); return { x: r.left, y: r.top, w: r.width, h: r.height }; });
+  // A plausible hand: a loop, a rise and a long tail.
+  const path = [];
+  for (let i = 0; i <= 60; i += 1) { const t = i / 60; path.push([0.1 + 0.75 * t + 0.05 * Math.sin(t * 18), 0.58 - 0.22 * Math.sin(t * Math.PI * 3) * (1 - t * 0.6)]); }
+  await phone.p.mouse.move(pad.x + pad.w * path[0][0], pad.y + pad.h * path[0][1]);
+  await phone.p.mouse.down();
+  for (const [x, y] of path.slice(1)) await phone.p.mouse.move(pad.x + pad.w * x, pad.y + pad.h * y);
+  await phone.p.mouse.up();
+  await phone.p.waitForTimeout(150);
+  await shot(phone.p, '390-05-signed.png');
+  await phone.p.click('[data-accept-go]');
+  await phone.p.waitForSelector('[data-accept-done]:not([hidden])', { timeout: 20000 });
+  await toEl(phone.p, '[data-accept-done]');
+  await phone.p.waitForTimeout(300);
+  await shot(phone.p, '390-06-accepted.png');
+  await toEl(phone.p, '#quote [data-quote-lines] tr.is-optional', 360);
+  await phone.p.waitForTimeout(300);
+  await shot(phone.p, '390-07-quotation-locked.png');
+  await desk.p.reload();
+  await desk.p.fill('#gate-pass', pass);
+  await desk.p.click('#gate-go');
+  await desk.p.waitForSelector('[data-accept-done]:not([hidden])', { timeout: 15000 });
+  await toAccept(desk.p);
+  await desk.p.waitForTimeout(400);
+  await shot(desk.p, '1440-08-accepted.png');
+  await desk.c.close();
+
+  // The office: the editor says so, the record, and the emails sent.
+  await page.reload();
+  await page.waitForFunction(() => window.__editor && window.__editor.state.filesLoaded, null, { timeout: 15000 });
+  await page.waitForTimeout(400);
+  await shot(page, '1440-09-editor-accepted.png');
+  const accId = await page.evaluate(() => window.__editor.state.proposal.acceptances[0].id);
+  const rec = await ctx.newPage();
+  await rec.goto(`${a.url}/staff/acceptance/${accId}`);
+  await rec.waitForTimeout(300);
+  await shot(rec, '1440-10-acceptance-record.png', { fullPage: true });
+  await rec.pdf({ path: resolve(dir, 'acceptance-record-A4.pdf'), format: 'A4', printBackground: true });
+  await rec.close();
+  const mails = a.outbox();
+  const mailShot = async (match, name) => {
+    const m = mails.filter((x) => match(x)).at(-1);
+    if (!m) return;
+    const mp = await ctx.newPage();
+    await mp.setViewportSize({ width: 720, height: 900 });
+    await mp.setContent(`<!doctype html><meta charset="utf-8"><body style="margin:0;background:#f2f2f2"><p style="font:12px Helvetica,Arial;color:#555;padding:12px 24px;margin:0">To: ${m.to.join(', ')}<br>Subject: ${m.subject}</p>${m.html}</body>`);
+    await shot(mp, name, { fullPage: true });
+    await mp.close();
+  };
+  await mailShot((m) => /^Changes requested:/.test(m.subject), 'email-01-changes-requested.png');
+  await mailShot((m) => /^Accepted:/.test(m.subject), 'email-02-office-accepted.png');
+  await mailShot((m) => /^Your acceptance:/.test(m.subject), 'email-03-person-accepted.png');
+
+  // A revision after acceptance: the checklist says so, then the client is asked again.
+  await page.fill('[data-path="meta.project"] input', 'Proposed specialist controlled rock removal, Stage 2');
+  await page.keyboard.press('Control+s');
+  await page.waitForFunction(() => /^Saved/.test(document.getElementById('ed-saved').textContent));
+  await page.click('#ed-check');
+  await page.waitForFunction(() => [...document.querySelectorAll('dialog .ed-ack')].some((n) => /was accepted by/.test(n.textContent)));
+  await page.evaluate(() => [...document.querySelectorAll('dialog .ed-ack')].find((n) => /was accepted by/.test(n.textContent)).scrollIntoView({ block: 'center' }));
+  await page.waitForTimeout(200);
+  await shot(page, '1440-11-checklist-reacceptance.png');
+  for (const box of await page.$$('dialog .ed-ack input')) await box.check();
+  await page.fill('#ck-note', 'Start moved to the week of 2 November, as asked');
+  await page.click('#ck-publish');
+  await page.waitForSelector('dialog h2:has-text("Rev B")', { timeout: 30000 });
+  await page.click('dialog .ed-dialog-head button');
+  await phone.p.goto(link);
+  await phone.p.fill('#gate-pass', pass);
+  await phone.p.click('#gate-go');
+  await phone.p.waitForSelector('[data-accept-banner]:not([hidden])', { timeout: 15000 });
+  await toAccept(phone.p);
+  await phone.p.waitForTimeout(400);
+  await shot(phone.p, '390-12-revision-b-reaccept.png');
+  await toEl(phone.p, '[data-accept-form]', 160);
+  await phone.p.waitForTimeout(300);
+  await shot(phone.p, '390-12b-revision-b-form.png');
+  await phone.p.click('[data-revision-links] a:has-text("Rev A")');
+  await phone.p.waitForSelector('[data-accept-done]:not([hidden])', { timeout: 15000 });
+  await toEl(phone.p, '[data-accept-done]');
+  await phone.p.waitForTimeout(400);
+  await shot(phone.p, '390-13-revision-a-accepted.png');
+  await phone.c.close();
+
+  // An acceptance that came by email: an administrator records it.
+  await page.click('#ed-menu');
+  await page.click('dialog .ed-menu-item:has-text("Record an acceptance")');
+  await page.fill('#ra-note', 'Signed PDF of Rev B returned by email on 15 October, from sam.whitlock@example.com.');
+  await page.waitForTimeout(200);
+  await shot(page, '1440-14-record-acceptance.png');
+  await page.click('#ra-go');
+  await page.waitForFunction(() => (window.__editor.state.proposal.acceptances || []).length === 2, null, { timeout: 15000 });
+  await page.waitForTimeout(300);
+  await shot(page, '1440-15-editor-recorded.png');
+  await ctx.close();
+  void id;
+  return readdirSync(dir).length;
+}
+
 async function pdf() {
   const page = await browser.newPage({ ...AU, viewport: { width: 1200, height: 900 }, reducedMotion: 'reduce' });
   await ready(page);
@@ -486,6 +655,8 @@ try {
     console.log(`demo-out/phase3/: ${await phase3Stills()} captures`);
   } else if (process.argv.includes('--phase4')) {
     console.log(`demo-out/phase4/: ${await phase4Stills()} captures`);
+  } else if (process.argv.includes('--phase5')) {
+    console.log(`demo-out/phase5/: ${await phase5Stills()} captures`);
   } else {
     const desk = await stills(1440, 900, 1);
     const phone = await stills(390, 844, 2);
@@ -495,7 +666,8 @@ try {
     const e = await editorStills();
     const p3 = await phase3Stills();
     const p4 = await phase4Stills();
-    console.log(`demo-out/: ${desk} sections at 1440, ${phone} at 390, arrival shots, two scroll videos, A4 PDF, ${e} editor, ${p3} Phase 3 and ${p4} Phase 4 captures`);
+    const p5 = await phase5Stills();
+    console.log(`demo-out/: ${desk} sections at 1440, ${phone} at 390, arrival shots, two scroll videos, A4 PDF, ${e} editor, ${p3} Phase 3, ${p4} Phase 4 and ${p5} Phase 5 captures`);
   }
 } finally {
   await browser.close();

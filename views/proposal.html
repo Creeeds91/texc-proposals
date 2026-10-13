@@ -555,6 +555,7 @@
 <section id="accept" class="sec" data-sec="accept" data-label="Acceptance" data-surface="ink">
   <div class="wrap">
     <div class="sec-head" data-reveal><span class="sec-num" data-secnum></span><h2 class="h2">Acceptance</h2></div>
+    <p class="accept-banner" data-accept-banner role="status" hidden></p>
     <div class="accept">
       <div class="accept-summary" data-reveal>
         <aside class="notice notice--dark"><svg class="ic" aria-hidden="true"><use href="/assets/img/icons.svg#shield-check"/></svg><p data-locked="hp1Framing"></p></aside>
@@ -564,26 +565,60 @@
           <div><dt>Optional items</dt><dd data-field="quote.optionsText" data-empty="None selected" data-live>None selected</dd></div>
           <div class="accept-total"><dt>Total inc GST</dt><dd data-field="quote.totalText" data-empty="—" data-live>—</dd></div>
         </dl>
-        <p class="fineprint fineprint--dark">Hold point HP1. Planning and site preparation can begin once this is accepted. No blasting proceeds until hold points HP2 to HP5 are met.</p>
+        <p class="fineprint fineprint--dark" data-field="accept.holdNote" data-empty="Planning and site preparation can begin once this is accepted.">Planning and site preparation can begin once this is accepted.</p>
       </div>
-      <form class="accept-form" data-accept-form novalidate data-reveal>
-        <div class="field-row">
-          <label class="field"><span class="field-label">Full name</span><input name="name" autocomplete="name" required></label>
-          <label class="field"><span class="field-label">Position</span><input name="position" autocomplete="organization-title" required></label>
+      <div class="accept-side">
+        <form class="accept-form" data-accept-form novalidate data-reveal>
+          <div class="field-row">
+            <label class="field"><span class="field-label">Full name</span><input name="name" autocomplete="name" required maxlength="120" data-prefill="client.contactName"></label>
+            <label class="field"><span class="field-label">Position</span><input name="position" autocomplete="organization-title" required maxlength="120" data-prefill="client.contactPosition"></label>
+          </div>
+          <div class="field-row">
+            <label class="field"><span class="field-label">Company</span><input name="company" autocomplete="organization" required maxlength="200" data-prefill="client.company"></label>
+            <label class="field"><span class="field-label">Email</span><input name="email" type="email" autocomplete="email" required maxlength="200"></label>
+          </div>
+          <label class="check"><input type="checkbox" name="authority" required><span>I have authority to accept on behalf of <span data-field="client.company" data-empty="the company"></span>.</span></label>
+          <label class="check"><input type="checkbox" name="accept" required><span data-field="accept.clause" data-empty=""></span></label>
+          <fieldset class="sig" data-sig>
+            <legend class="field-label">Signature</legend>
+            <p class="sig-hint" data-sig-hint>Draw your signature, or type your full name below. Either is enough.</p>
+            <div class="sig-pad" data-sig-draw>
+              <canvas class="sig-canvas" data-sig-canvas role="img" aria-label="Signature pad. Draw with a finger, stylus or mouse." width="600" height="180"></canvas>
+              <button type="button" class="sig-clear" data-sig-clear>Clear</button>
+            </div>
+            <label class="field" data-sig-type><span class="field-label">Type your full name</span><input name="typed" class="sig-typed" autocomplete="off" maxlength="120"></label>
+          </fieldset>
+          <div class="accept-actions">
+            <button type="submit" class="btn btn--primary btn--lg btn--glow" data-accept-go>Accept proposal</button>
+            <button type="button" class="btn btn--secondary btn--lg" data-request-changes aria-expanded="false" aria-controls="changes-form">Request changes</button>
+          </div>
+          <p class="accept-note" data-accept-note role="status" aria-live="polite"></p>
+        </form>
+        <div class="accept-done" data-accept-done tabindex="-1" hidden>
+          <p class="accept-done-label"><svg class="ic" aria-hidden="true"><use href="/assets/img/icons.svg#check-circle"/></svg><span data-done-label>Accepted</span></p>
+          <p class="accept-done-by" data-done-by></p>
+          <dl class="accept-dl">
+            <div><dt>Accepted</dt><dd data-done-when></dd></div>
+            <div><dt>Optional items</dt><dd data-done-options></dd></div>
+            <div class="accept-total"><dt>Total inc GST</dt><dd data-done-total></dd></div>
+          </dl>
+          <p class="fineprint fineprint--dark" data-field="accept.holdMet" data-empty=""></p>
         </div>
-        <div class="field-row">
-          <label class="field"><span class="field-label">Company</span><input name="company" autocomplete="organization" required data-prefill="client.company"></label>
-          <label class="field"><span class="field-label">Email</span><input name="email" type="email" autocomplete="email" required></label>
-        </div>
-        <label class="check"><input type="checkbox" name="authority" required><span>I have authority to accept on behalf of <span data-field="client.company" data-empty="the company"></span>.</span></label>
-        <label class="check"><input type="checkbox" name="accept" required><span data-field="accept.clause" data-empty=""></span></label>
-        <label class="field"><span class="field-label">Signature — type your full name</span><input name="typed" class="sig-typed" autocomplete="off"></label>
-        <div class="accept-actions">
-          <button type="submit" class="btn btn--primary btn--lg btn--glow">Accept proposal</button>
-          <a class="btn btn--secondary btn--lg" data-request-changes href="#contact">Request changes</a>
-        </div>
-        <p class="accept-note" data-accept-note role="status" aria-live="polite"></p>
-      </form>
+        <form class="changes-form" id="changes-form" data-changes-form novalidate hidden>
+          <h3 class="h4">Request changes</h3>
+          <p class="changes-intro">Tell us what you would like changed. Nothing is accepted, and this proposal stays open.</p>
+          <div class="field-row">
+            <label class="field"><span class="field-label">Your name</span><input name="name" autocomplete="name" required maxlength="120"></label>
+            <label class="field"><span class="field-label">Email</span><input name="email" type="email" autocomplete="email" required maxlength="200"></label>
+          </div>
+          <label class="field"><span class="field-label">What would you like changed?</span><textarea name="message" rows="5" required maxlength="2000"></textarea></label>
+          <div class="accept-actions">
+            <button type="submit" class="btn btn--primary btn--lg" data-changes-go>Send the request</button>
+            <button type="button" class="btn btn--secondary btn--lg" data-changes-cancel>Cancel</button>
+          </div>
+          <p class="accept-note" data-changes-note role="status" aria-live="polite"></p>
+        </form>
+      </div>
     </div>
   </div>
 </section>

@@ -27,6 +27,10 @@
     {
       "source": "/editor/:id",
       "destination": "/api/editor?id=:id"
+    },
+    {
+      "source": "/staff/acceptance/:id",
+      "destination": "/api/acceptance-record?id=:id"
     }
   ],
   "headers": [
