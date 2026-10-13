@@ -748,3 +748,84 @@ can be looked at before an administrator decides.
 (`source`, `source_ref` reserved), zoom controls in the viewer (Open in new
 tab covers it), archiving a file (a removed card leaves the file on the
 proposal, because an issued revision may still point at it).
+
+---
+
+## 16. Phase 5 as built (13 Oct 2026)
+
+Where the build refines §6. Q7 was built as recommended: online acceptance
+works before TEXC has terms and conditions (the acceptance sentence leaves
+terms out until a version and text exist), and a proposal may allow a drawn
+signature, a typed one, or either (`accept.signature`).
+
+**What the client does.** On the current revision: name, position and
+company (pre-filled from the proposal, editable), email, the two
+confirmations, and a signature. A typed signature must be the full name as
+entered above. The drawn signature pad (`assets/js/signature.js`, loaded as
+the section comes near) exports a fixed 600 × 180 PNG; it cannot be used from
+a keyboard, so "drawn only" is for proposals where that is acceptable, and the
+default allows either. Optional quotation items ticked on the page are what is
+accepted. The form says exactly what is missing; nothing is sent until it is
+complete.
+
+**What the server checks** (`lib/acceptances.js`, `api/accept.js`), in order:
+the link and the view token; that this is the current revision (an earlier
+revision can be read, never accepted); that the SHA-256 the page took of the
+bytes it decrypted equals the revision's `plaintext_sha256`; the details, the
+confirmations and a signature the revision allows; the optional items are the
+revision's own; and the total recomputed from the revision's
+`quote_snapshot` equals the total the page showed (if not, nothing is
+accepted and the page is told the real total). Any refusal of access is the
+uniform 410; a form problem is a 422 naming the fields.
+
+**One acceptance per revision, exactly.** The signature and the record are
+stored first (paths named by a new acceptance id), then `texc_accept()` writes
+the row in one transaction with the proposal row locked. Twenty simultaneous
+attempts write one acceptance; the other nineteen, like a second tap, get that
+acceptance back and their files are removed. `texc_acceptances` is
+append-only by trigger, unique per revision, and a database check refuses a
+client acceptance without both confirmations, a fingerprint and a signature,
+or a staff one without a note.
+
+**The record.** `lib/acceptance-record.js` renders one self-contained HTML
+page at the moment of acceptance — who, when (Hobart and UTC), the two
+sentences as ticked, the HP1 framing, the quotation as accepted with the
+optional items marked, the signature (embedded), and the evidence (record id,
+text and revision fingerprints, device family, keyed connection hash,
+session). It is stored in the private `texc-acceptances` bucket and its
+SHA-256 in the row. Staff open it at `/staff/acceptance/<id>` (any role); the
+bytes are checked against the fingerprint before they are shown, under the
+record's own CSP: its one style block by hash, `img-src data:`, nothing else.
+It prints to A4.
+
+**Emails.** The office (`NOTIFY_TO`, and `NOTIFY_BCC` if set) and the person
+accepting. Both carry the revision's own HP1 framing; the person's names the
+next hold point as the revision words it (HP2's title and requirement), never
+a generic line. A failed send is logged as an event; the acceptance stands.
+
+**After acceptance.** The page shows who accepted and when, and the
+quotation's optional items lock to what was accepted. Publishing a new
+revision over an accepted one needs an acknowledgement in the checklist
+(`reaccept:<rev>`, enforced by the server too); the client then sees
+"Revised after acceptance — re-acceptance required", and the earlier revision
+opens marked superseded and still accepted.
+
+**Recorded by staff.** An administrator can record an acceptance that came
+another way (a signed PDF, an email) from the editor's menu: who, how it was
+received (a note of at least a sentence), audited before it is written. Its
+record says "Recorded by staff". It uses the revision's default optional
+items.
+
+**Request changes.** A short form beside Accept: name, email, what to change
+(2,000 characters). Logged as `changes_requested` against the revision being
+read and emailed to the office; nothing is claimed and the proposal stays
+open. Limited per connection and to 20 per proposal per day.
+
+**The hold-point lines follow the proposal.** The summary and the accepted
+panel name the proposal's own hold points ("No blasting proceeds until hold
+points HP2 to HP5 are met" when it has HP1 to HP5), not a fixed range.
+
+**Not built:** a downloadable PDF of the record (it prints from the browser);
+signing by more than one person; an acceptance by a client on a revision that
+has expired its valid-until date but not its link (the link expiry governs,
+as for reading).

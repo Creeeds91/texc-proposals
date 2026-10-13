@@ -51,7 +51,7 @@ answered, and say where the answer came from.
 | C27 | Domain (`proposals.texc.au`?), sender address, SPF/DKIM | Open |
 | C28 | Staff accounts and roles | Open |
 | C29 | Default cover photo: TEXC-own only; `civil-blast-pattern` shows houses in the full frame and is not used | Demo uses `quarry-dusk-wide` |
-| C31 | Privacy notice for proposals (names, emails, signatures, hashed IPs) | Open, Phase 5 |
+| C31 | Privacy notice for proposals: acceptance now stores the name, position, company and email typed, the signature, a keyed hash of the connection, the device family, and requests for changes | Open — **needed before the first live acceptance** |
 | C34 | Confirm texc.au is still aliased to deployment `33e8068` (one browser check of `/team/`) | Open |
 | Q2 | Repository `Creeeds91/texc-proposals` | Done 13 Oct 2026 — created by Jesse, private |
 | D2 | Supabase project (Sydney, paid plan), Vercel project, and the variables in `.env.example` — VAULT_KEY kept offline as well | Needed before the first deployment. Approval to create paid services is Jesse's |
@@ -59,8 +59,19 @@ answered, and say where the answer came from.
 | D1 | Only deliberate static files may be public. `lib/editor-html.js` carries the editor and its library (Chalmers presets, prototype rates); `content/` and `fixtures/` must not be served either. Whether Vercel serves `lib/` from the repo root was not confirmed from its docs | Built: Vercel serves only `public/` (an explicit list written by the build). Still to prove on the first preview deployment: `/lib/editor-html.js` and `/content/library.seed.json` return 404 |
 | D4 | Hosted Supabase Storage, from a browser: a PUT to a signed upload URL (raw body, `Content-Type: application/pdf`, no key), a CORS fetch of a signed download URL, and `&download=<name>` naming the file. All three hold against the local stand-in, which mimics the documented behaviour | Prove on the first preview deployment: attach, view and download one document |
 | D5 | Vercel serves `/assets/vendor/` with `WORKER_CSP` and the pdf.js worker runs under it (if a browser applies the page's policy to the worker instead, pdf.js falls back to plain scripts for JPEG 2000 and colour) | Prove on the first preview deployment: open a document, no CSP errors in the console |
+| Q7 | Online acceptance before T&Cs; signature type; adviser wording | Built as recommended: acceptance works without T&Cs (the sentence leaves terms out), drawn or typed signature (per proposal). **The adviser's wording (C25) is still needed before the first live proposal** |
+| C38 | Wording drafted by Brand in Black for acceptance, not yet approved by TEXC: "Planning and site preparation can begin once this is accepted", "Hold point HP1 is met", the request-changes form, the acceptance and changes emails, and the acceptance record's headings | Open — TEXC to approve before the first live proposal |
 | Q6 | Malware scanning | Option A built (staff-only uploads plus the structural check). Option B (ClamAV in Sydney) only if clients ever upload |
 | Q4–Q15 | See `docs/architecture.md` §10. Recommendations were approved with the plan | Approved as recommended |
+
+## Phase 5 notes
+
+- **The fingerprint is the proof.** A client can only accept the exact text that was published: the page hashes the bytes it decrypted and the server compares them with the revision's. An acceptance record shows both fingerprints.
+- **Only the current revision can be accepted.** Earlier ones open (marked superseded) and show their acceptance if they had one. Publishing over an accepted revision asks for an acknowledgement first, and the client is then asked to accept again.
+- **Recording an acceptance by hand** (an emailed or signed copy) is for administrators, needs a note, is audited, and cannot be undone — as a client's acceptance cannot. A mistaken one is a matter for a later revision, and for the record to show it.
+- **A drawn signature cannot be made from a keyboard.** Proposals default to "drawn or typed"; choose "drawn only" knowing it excludes keyboard-only users.
+- **Valid-until vs link expiry.** Acceptance is open while the link is (valid-until + 30 days, C2). Whether TEXC wants acceptance to close at valid-until itself is a decision for them.
+- **Emails go to the office (NOTIFY_TO, NOTIFY_BCC) and the person accepting.** The sender domain still needs SPF/DKIM (C27) before these reach inboxes reliably.
 
 ## Phase 4 notes
 

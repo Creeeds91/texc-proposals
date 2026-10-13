@@ -159,6 +159,27 @@ added later is appended with `alter table … add column`, never tidied into the
 - After any change here run `check.mjs attachments refusals editor flow` and
   `node scripts/demo/capture.mjs --phase4`, and look at the captures.
 
+## Acceptance (Phase 5)
+
+`docs/architecture.md` §16 is the design. What must hold:
+
+- **A client accepts exactly what was published**: the current revision, the
+  SHA-256 of the bytes they decrypted equal to the revision's, and a total
+  the server recomputes from the revision's own quote snapshot. Never accept
+  on anything the request says about the content.
+- **One acceptance per revision, written by `texc_accept()` with the proposal
+  locked.** `texc_acceptances` is append-only; never work around it. A
+  mistake is answered by a new revision, not an edit.
+- **The record is rendered once, stored, fingerprinted, and never
+  regenerated.** It is served only after its bytes match `record_sha256`.
+- **Wording comes from the revision**: the HP1 framing is the frozen locked
+  line, the next hold point is the revision's own. Never type operational
+  wording into an email or the record.
+- The sentences a client ticks live in `assets/js/acceptance.js`, shared with
+  the server; change them there and nowhere else.
+- After any change here run `check.mjs schema acceptance flow` and
+  `node scripts/demo/capture.mjs --phase5`, and look at the captures.
+
 ## Generated files
 
 `views/*.html`, `lib/editor-html.js`, `lib/signin-html.js`,
