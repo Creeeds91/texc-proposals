@@ -24,11 +24,11 @@ answered, and say where the answer came from.
 | C10 | Client-facing status wording | TEXC's own is "Preliminary - For Review"; the build uses it verbatim | Status chip |
 | C11 | Misfire line adapted: "an enquiry form is not an emergency channel" → "this proposal is not an emergency channel" | Compliance line from `services.ts` | Section 18 |
 | C12 | Covering-letter template | New text, drafted for the demo | Section 02 |
-| C13 | Hazard presets for civil, quarry & mining, microblasting, shot sleeping, misfire | None exist | Editor library (Phase 2) |
+| C13 | Hazard presets for civil, quarry & mining, microblasting, shot sleeping, misfire | None exist | Editor library: five empty slots, labelled "none supplied yet" |
 | C14 | Risk rating scale | CCR-03, Risk Level Table never supplied | Rating column built and hidden |
 | C15 | Hazard "owner" column | Not in any TEXC source | Built and hidden |
 | C16 | Responsibility-matrix assignments | Operational content | Demo assignments are illustrative |
-| C17 | Methodology presets beyond Chalmers Lane | None exist | Editor library (Phase 2) |
+| C17 | Methodology presets beyond Chalmers Lane | None exist | Editor library: only the Chalmers eight-step method |
 | C18 | Powder-factor unit; whether MIC and powder factor may be published at all | CCR-13; "never publish quantities" | Section 09 is off by default |
 | C19 | Flyrock, dust, noise and monitoring wording | Operational content | Demo uses Chalmers Lane controls only |
 | C20 | Generic logistics commitments | Drawn from `services.ts`; need sign-off as proposal lines. The Explosives Logistics safety line also says "Generic imagery does not imply ownership…", which reads oddly in a proposal | Section 13 (off by default) |
@@ -39,7 +39,7 @@ answered, and say where the answer came from.
 | C25 | Acceptance legal wording; signature type. HP1 line adapted from "Approval of this preliminary assessment" to "Acceptance of the quotation and preliminary risk assessment" | Adviser wording; register notes a signature block "changes who is on the hook" | Section 19 |
 | C30 | Reusing website copy (About, capability strip, values) inside proposals | Approved for the website only | Section 04 |
 | C32 | "Labour-only (no equipment supplied)" vs MPU "equipment provision is confirmed on enquiry" | Prototype vs `services.ts` | Not used |
-| C33 | Chalmers Lane–derived wording approved for other clients | Beardwood-specific source | Demo, and Phase 2 presets |
+| C33 | Chalmers Lane–derived wording approved for other clients | Beardwood-specific source | Demo, and every Chalmers preset in the editor library (each insert must be acknowledged) |
 | C35 | 000 emergency line, adapted "This website" → "This proposal" | `pages.ts contact.emergency` | Section 18 |
 | C37 | Preliminary status line adapted "This document" → "This proposal" | Chalmers Lane callout | Section 18 and the callout in 05 |
 
@@ -53,8 +53,19 @@ answered, and say where the answer came from.
 | C29 | Default cover photo: TEXC-own only; `civil-blast-pattern` shows houses in the full frame and is not used | Demo uses `quarry-dusk-wide` |
 | C31 | Privacy notice for proposals (names, emails, signatures, hashed IPs) | Open, Phase 5 |
 | C34 | Confirm texc.au is still aliased to deployment `33e8068` (one browser check of `/team/`) | Open |
-| Q2 | Repository `Creeeds91/texc-proposals` | The GitHub app could not create it (403). Waiting on an empty private repo |
+| Q2 | Repository `Creeeds91/texc-proposals` | Done 13 Oct 2026 — created by Jesse, private |
+| D1 | Only deliberate static files may be public. `lib/editor-html.js` carries the editor and its library (Chalmers presets, prototype rates); `content/` and `fixtures/` must not be served either. Whether Vercel serves `lib/` from the repo root was not confirmed from its docs | Phase 3: serve static files from an explicit output folder, and prove on the first preview deployment that `/lib/editor-html.js` and `/content/library.seed.json` return 404 |
 | Q4–Q15 | See `docs/architecture.md` §10. Recommendations were approved with the plan | Approved as recommended |
+
+## Phase 2 notes
+
+- **Drafts live in one browser until Phase 3.** Autosave (2 s after typing stops, never more than 20 s while changes wait) writes to that browser's storage; uploaded photographs are resized there (EXIF and GPS dropped) and kept in its database. Export a draft as `.json` to move it or keep a copy. Phase 3 moves drafts to the server with a version check, so two people cannot overwrite each other silently.
+- **The library is seeded, not managed.** `content/library.seed.json` holds the Chalmers Lane presets (hazards, eight-step method, HP1–HP5, site conditions, constraints, risk introduction and review), the status callout, the 13 responsibility-matrix items, prototype rates and terms (C1) and the letter template (C12). Five job types have empty hazard slots (C13). Editing the library in the app, and storing it in `texc_settings`, arrives with Phase 3.
+- **Unlocking a compliance line** (a website `safety` line) asks for a name and records it on the proposal. Until accounts exist (Phase 3) that name is typed, not signed in — the Phase 3 build ties it to the signed-in admin and writes it to the audit log.
+- **Empty rows block publishing.** An added-but-blank row, a hazard without its control, a photograph row with no image and a limit with no source each block, because each would print as an empty card or cell.
+- **A new photograph starts with no alt text or credit.** The previous ones described a different image.
+- **Marking a field CONFIRM keeps its text** as the suggestion; "Confirmed — use this text" restores it.
+- **Publishing is visible but disabled** in the checklist until Phase 3. So is the comparison with the previous revision.
 
 ## Phase 1 notes
 

@@ -586,7 +586,8 @@
         "basis": "hourly",
         "qtyHundredths": 6000,
         "unit": "hr",
-        "rateCents": 15000
+        "rateCents": 15000,
+        "unconfirmed": "Rate from a superseded prototype, not confirmed by TEXC (C1)"
       },
       {
         "id": "l2",
@@ -594,7 +595,8 @@
         "basis": "hourly",
         "qtyHundredths": 800,
         "unit": "hr",
-        "rateCents": 15000
+        "rateCents": 15000,
+        "unconfirmed": "Rate from a superseded prototype, not confirmed by TEXC (C1)"
       },
       {
         "id": "l3",
@@ -611,7 +613,8 @@
         "unit": "hr",
         "rateCents": 15000,
         "optional": true,
-        "optionalDefault": false
+        "optionalDefault": false,
+        "unconfirmed": "Rate from a superseded prototype, not confirmed by TEXC (C1)"
       }
     ],
     "terms": {
@@ -667,15 +670,40 @@
       "visibility": "on-request"
     }
   ],
-  "terms": {
-    "version": {
-      "$confirm": "TEXC terms and conditions version"
-    },
-    "body": {
-      "$confirm": "TEXC terms and conditions — none supplied yet (C3)"
-    }
-  },
+  "terms": {},
   "accept": {
     "signature": "both"
-  }
+  },
+  "presetsUsed": [
+    {
+      "id": "constrained-rock-removal",
+      "path": "risk.hazards",
+      "name": "Hazard register — constrained rock removal near structures",
+      "confirm": "Chalmers Lane wording for Beardwood Contractors, not yet approved by TEXC for reuse (C33). Review it against this site before issuing."
+    },
+    {
+      "id": "progressive-controlled",
+      "path": "method.steps",
+      "name": "Work process — progressive controlled rock removal",
+      "confirm": "Chalmers Lane wording for Beardwood Contractors, not yet approved by TEXC for reuse (C33). Review it against this site before issuing."
+    },
+    {
+      "id": "hp1-hp5",
+      "path": "risk.holdPoints",
+      "name": "Hold points HP1 to HP5",
+      "confirm": "Chalmers Lane wording for Beardwood Contractors, not yet approved by TEXC for reuse (C33). Review it against this site before issuing."
+    },
+    {
+      "id": "prototype-terms",
+      "path": "quote.terms",
+      "name": "Quotation terms",
+      "confirm": "Terms from a superseded prototype, not confirmed by TEXC (C1)"
+    },
+    {
+      "id": "letter-template",
+      "path": "letter.body",
+      "name": "Covering letter",
+      "confirm": "Covering-letter template drafted by Brand in Black, not yet approved by TEXC (C12)"
+    }
+  ]
 }

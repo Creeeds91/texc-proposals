@@ -91,6 +91,11 @@
   --doc-rule: #d5d2ca;
   --doc-gold-text: #7a5b17; /* gold TEXT on paper — 5.97:1. --gold there is 2.39:1 and fails. */
 
+  /* ---- Channels, for translucent scrims: rgb(var(--ink-rgb) / 0.8) ------- */
+  --ink-rgb: 17 17 17;          /* = --ink */
+  --black-rgb: 0 0 0;
+  --steel-200-rgb: 216 213 207; /* = --steel-200 */
+
   /* ---- Spacing — 4px base grid ------------------------------------------ */
   --space-1: 4px;
   --space-2: 8px;

@@ -20,6 +20,7 @@
  * scripts/build.mjs writes into the page (lib/brand.js is the source).
  */
 import { BASES, quoteTotals, lineAmountCents, formatAUD, formatQty } from './money.js';
+import { PINNED_FIRST, PINNED_LAST, DEFAULT_OFF, DOC_TYPES, STATUS, isConfirm } from './schema.js';
 
 const D = document;
 const ROOT = D.documentElement;
@@ -34,7 +35,6 @@ const TPL = readJson('template-data');
 
 /* ------------------------------------------------------------------ helpers */
 
-const isConfirm = (v) => v != null && typeof v === 'object' && !Array.isArray(v) && '$confirm' in v;
 const editorMode = () => ROOT.dataset.mode === 'editor';
 const get = (obj, path) => path.split('.').reduce((o, k) => (o == null ? undefined : o[k]), obj);
 const str = (v) => (typeof v === 'string' ? v : typeof v === 'number' && Number.isFinite(v) ? String(v) : '');
@@ -60,10 +60,23 @@ function confirmTag(v) {
   return mark;
 }
 
+/** Editor mode only: the tag, then the wording waiting on confirmation (if any), so the layout reads true. */
+function confirmWithSuggestion(v) {
+  const out = [confirmTag(v)];
+  const text = Array.isArray(v.suggested) ? v.suggested.filter((x) => typeof x === 'string').join(' ') : str(v.suggested);
+  if (text) {
+    const span = D.createElement('span');
+    span.className = 'confirm-suggested';
+    span.textContent = ' ' + text;
+    out.push(span);
+  }
+  return out;
+}
+
 /** Text into an element. A $confirm shows only in editor mode; otherwise the fallback. */
 function setText(el, value, fallback = '') {
   if (isConfirm(value)) {
-    if (editorMode()) { el.replaceChildren(confirmTag(value)); return; }
+    if (editorMode()) { el.replaceChildren(...confirmWithSuggestion(value)); return; }
     value = undefined;
   }
   const text = str(value);
@@ -83,7 +96,7 @@ function setRich(el, text) {
 
 function setParas(el, value) {
   el.replaceChildren();
-  if (isConfirm(value) && editorMode()) { const p = D.createElement('p'); p.append(confirmTag(value)); el.append(p); return; }
+  if (isConfirm(value) && editorMode()) { const p = D.createElement('p'); p.append(...confirmWithSuggestion(value)); el.append(p); return; }
   const paras = typeof value === 'string' ? value.split(/\n\s*\n/) : list(value);
   for (const text of paras) {
     if (isConfirm(text) || !str(text).trim()) continue;
@@ -110,22 +123,6 @@ function fmtBytes(n) {
 
 /* --------------------------------------------------------------- vocabulary */
 
-const DOC_TYPES = {
-  shotfiring: 'Shotfiring Proposal',
-  preliminary: 'Preliminary Proposal',
-  variation: 'Variation',
-  'relief-cover': 'Relief Cover Proposal',
-};
-// TEXC's own status wording where it has one ("Preliminary - For Review",
-// from its project documents). Never paraphrased.
-const STATUS = {
-  draft: 'Draft',
-  preliminary: 'Preliminary - For Review',
-  issued: 'Issued',
-  accepted: 'Accepted',
-  superseded: 'Superseded',
-  withdrawn: 'Withdrawn',
-};
 const HOLD_STATUS = { open: 'Open', met: 'Met', na: 'Not applicable' };
 const PARTIES = { texc: 1, client: 1, shared: 1 };
 const PARAMS = [
@@ -155,9 +152,6 @@ const ATTACH_GROUPS = [
   ['certificates', 'Certificates and insurance'],
   ['other', 'Other'],
 ];
-const PINNED_FIRST = ['cover'];
-const PINNED_LAST = ['accept', 'contact'];
-const DEFAULT_OFF = new Set(['params', 'logistics']);
 
 /* ------------------------------------------------------------------ images */
 
@@ -936,7 +930,9 @@ window.proposalState = () => ({ options: [...state.options], totals: state.view.
 
 async function boot() {
   ROOT.classList.add('js');
-  if (ROOT.dataset.boot === 'gate') return; // the gate decrypts, then calls applyConfig + initEffects
+  // The gate (Phase 3) decrypts and the editor loads its draft; each then
+  // calls applyConfig + initEffects itself.
+  if (ROOT.dataset.boot === 'gate' || ROOT.dataset.boot === 'editor') return;
   if (ROOT.dataset.boot === 'fixture' && ROOT.dataset.fixture) {
     try {
       const res = await fetch(ROOT.dataset.fixture, { cache: 'no-store' });

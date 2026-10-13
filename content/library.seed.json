@@ -1,0 +1,338 @@
+{
+  "_about": "Editor library. Inserting an item copies it into the proposal; editing the library never changes a published revision. Items derived from 2 Chalmers Lane are TEXC wording with the client tokenised as {client}; node scripts/check.mjs content-sync proves every line still appears word for word in the source. Items with \"confirm\" are inserted with that note and block publishing until acknowledged.",
+  "hazardPresets": [
+    {
+      "id": "constrained-rock-removal",
+      "name": "Constrained rock removal near structures",
+      "source": "texc/documents/projects/2-chalmers-lane-devonport/content/preliminary-risk-assessment.yml — Preliminary Hazard and Control Register",
+      "confirm": "Chalmers Lane wording for Beardwood Contractors, not yet approved by TEXC for reuse (C33). Review it against this site before issuing.",
+      "rows": [
+        {
+          "hazard": "Uncontrolled rock movement / falling material",
+          "control": "Loose material to be assessed and removed or stabilised where practicable before work commences. Personnel access beneath potentially unstable material restricted. Catchment/bund controls established where required."
+        },
+        {
+          "hazard": "Flyrock / displaced material",
+          "control": "Site-specific containment measures to be established for each work area. Protective matting and supplementary containment measures used where required following final assessment."
+        },
+        {
+          "hazard": "Adjacent residences and structures",
+          "control": "Surrounding structures and sensitive receptors to be considered during final work planning. Appropriate exclusion, containment and monitoring controls to be established prior to works."
+        },
+        {
+          "hazard": "Existing retaining structures",
+          "control": "Location and condition considered before commencement. Work methodology adjusted where required to minimise exposure to surrounding structures."
+        },
+        {
+          "hazard": "Restricted access",
+          "control": "Access routes established before mobilisation of drilling and protective equipment. Unnecessary personnel excluded from specialist work areas."
+        },
+        {
+          "hazard": "Steep / uneven terrain",
+          "control": "Personnel to use designated safe access where practicable. Work areas inspected for footing, loose material and fall exposure prior to commencement."
+        },
+        {
+          "hazard": "Heavy blast mat handling",
+          "control": "Mechanical assistance to be used where practicable. Mat placement methodology to be confirmed for individual work areas before handling begins."
+        },
+        {
+          "hazard": "Material travelling downslope",
+          "control": "Catchment/bund or equivalent physical containment established where identified as necessary following final site preparation."
+        },
+        {
+          "hazard": "Drilling operations",
+          "control": "Drilling area controlled and separated from unrelated activities. Equipment positioned to maintain stability and safe operator access."
+        },
+        {
+          "hazard": "Compressed-air hoses",
+          "control": "Hose routes planned to minimise trip, entanglement and damage exposure. Hoses positioned and protected from mobile plant where practicable."
+        },
+        {
+          "hazard": "Interaction with excavator / mobile plant",
+          "control": "Plant movements coordinated with TEXC operations. Separation maintained between drilling/blasting preparation and unrelated mobile plant activities."
+        },
+        {
+          "hazard": "Previously drilled/grouted holes",
+          "control": "Existing holes to be identified where practicable and considered during final preparation and work planning."
+        },
+        {
+          "hazard": "Unidentified services",
+          "control": "{client} to identify known services and provide relevant information prior to drilling. Work not to commence in affected areas until service risks are addressed."
+        },
+        {
+          "hazard": "Public / unauthorised access",
+          "control": "Controlled work area and appropriate exclusion arrangements established before specialist operations commence."
+        },
+        {
+          "hazard": "Multiple work areas",
+          "control": "Each nominated area assessed individually before work proceeds. Controls may differ between areas according to geometry and surrounding exposure."
+        },
+        {
+          "hazard": "Incomplete exposure of final rock profile",
+          "control": "Final work methodology not confirmed until rubble is removed sufficiently to allow inspection and assessment."
+        },
+        {
+          "hazard": "Changes in ground/site conditions",
+          "control": "Work stopped and reassessed where conditions materially differ from those upon which the approved assessment is based."
+        },
+        {
+          "hazard": "Misfire / abnormal blast outcome",
+          "control": "Managed under TEXC's applicable blasting procedures. Area remains controlled until the responsible shotfirer determines it safe for release."
+        },
+        {
+          "hazard": "Post-work loose rock",
+          "control": "Work area inspected following operations. {client} advised of any remaining loose or potentially unstable material requiring mechanical removal or further treatment."
+        }
+      ]
+    },
+    {
+      "id": "civil",
+      "name": "Civil construction",
+      "rows": [],
+      "missing": "No TEXC hazard register supplied for this job type (C13)"
+    },
+    {
+      "id": "quarry-mining",
+      "name": "Quarry and mining",
+      "rows": [],
+      "missing": "No TEXC hazard register supplied for this job type (C13)"
+    },
+    {
+      "id": "microblasting",
+      "name": "Microblasting",
+      "rows": [],
+      "missing": "No TEXC hazard register supplied for this job type (C13)"
+    },
+    {
+      "id": "shot-sleeping",
+      "name": "Shot sleeping",
+      "rows": [],
+      "missing": "No TEXC hazard register supplied for this job type (C13)"
+    },
+    {
+      "id": "misfire",
+      "name": "Misfire",
+      "rows": [],
+      "missing": "No TEXC hazard register supplied for this job type (C13)"
+    }
+  ],
+  "methodPresets": [
+    {
+      "id": "progressive-controlled",
+      "name": "Progressive controlled rock removal — eight steps",
+      "source": "texc/documents/projects/2-chalmers-lane-devonport/content/project-understanding.yml — Proposed Work Process",
+      "confirm": "Chalmers Lane wording for Beardwood Contractors, not yet approved by TEXC for reuse (C33). Review it against this site before issuing.",
+      "intro": "The following sequence describes TEXC's current understanding of how the work would be progressed. It is intentionally preliminary: the final methodology and site-specific controls remain subject to the exposed ground conditions, TEXC's final assessment and {client}' approval requirements.",
+      "steps": [
+        {
+          "title": "Make the work area safe",
+          "detail": "Before specialist work begins, loose or unstable material presenting an immediate risk to personnel, equipment or blasting products is to be removed, stabilised or otherwise controlled. Safe access and a suitable catchment / bund arrangement will be established where required."
+        },
+        {
+          "title": "Select and expose the first rock section",
+          "detail": "The work will proceed progressively. TEXC and {client} will identify which exposed rock section is suitable to address first, taking into account access, surrounding structures, containment requirements and the ability to safely recover broken material after firing."
+        },
+        {
+          "title": "Mark-up and drilling",
+          "detail": "The selected area will be marked out and drilled to suit the exposed rock geometry and the required removal outcome. Drilling results and actual hole conditions will be recorded and reviewed before the area progresses to charging."
+        },
+        {
+          "title": "Final Blast Assessment",
+          "detail": "Following drilling, TEXC will assess the collective hole geometry, rock conditions and surrounding constraints to determine the appropriate loading and firing arrangement for the specific section. Final quantities and arrangements will be determined by the responsible shotfirer following assessment of the actual drilled and exposed conditions."
+        },
+        {
+          "title": "Initiation system and containment preparation",
+          "detail": "The firing system will be installed and checked. Protective face spacing / separation materials, blast mats and supplementary containment will then be positioned as required."
+        },
+        {
+          "title": "Enhanced matting and overburden containment",
+          "detail": "Where the firing location is positioned against a wall or other sensitive boundary, multiple layers of protective matting may be used. Where suitable and safe to do so, loose material may be placed over the matting as additional overburden to assist with containment of blast effects. The exact arrangement will be confirmed for each firing location."
+        },
+        {
+          "title": "Controlled firing and clearance",
+          "detail": "The applicable exclusion, communication and firing controls will be established before the blast is initiated. The area will remain controlled until the responsible shotfirer has completed the required post-blast inspection and determined that it is safe for release."
+        },
+        {
+          "title": "Mechanical extraction and repeat as required",
+          "detail": "Following clearance, {client}' machine will be used to extract the fragmented material and expose the next section. The same assessment, preparation, containment and firing process will be repeated as many times as necessary to safely complete the agreed rock-removal scope."
+        }
+      ],
+      "callouts": [
+        {
+          "lead": "",
+          "text": "The work is expected to be undertaken progressively rather than as a single unrestricted blast. Each section will be treated as its own controlled work area and reassessed before progression."
+        }
+      ]
+    }
+  ],
+  "holdPointPresets": [
+    {
+      "id": "hp1-hp5",
+      "name": "HP1 to HP5 — approval through authority to proceed",
+      "source": "texc/documents/projects/2-chalmers-lane-devonport/content/preliminary-risk-assessment.yml — Hold Points",
+      "confirm": "Chalmers Lane wording for Beardwood Contractors, not yet approved by TEXC for reuse (C33). Review it against this site before issuing.",
+      "rows": [
+        {
+          "code": "HP1",
+          "title": "{client} Preliminary Approval",
+          "requirement": "Quotation and preliminary risk assessment reviewed and accepted for progression to detailed planning.",
+          "status": "open"
+        },
+        {
+          "code": "HP2",
+          "title": "Site Preparation",
+          "requirement": "Rubble and loose material removed sufficiently to expose the nominated work areas and permit detailed assessment.",
+          "status": "open"
+        },
+        {
+          "code": "HP3",
+          "title": "TEXC Final Inspection",
+          "requirement": "TEXC inspects the exposed areas and confirms the actual work scope and required controls.",
+          "status": "open"
+        },
+        {
+          "code": "HP4",
+          "title": "Final Controls Confirmed",
+          "requirement": "Required containment, access, exclusion, catchment, monitoring and other site-specific controls are confirmed.",
+          "status": "open"
+        },
+        {
+          "code": "HP5",
+          "title": "Authority to Proceed",
+          "requirement": "Applicable {client} and TEXC requirements are satisfied before specialist blasting activities commence.",
+          "status": "open"
+        }
+      ]
+    }
+  ],
+  "siteConditions": {
+    "source": "texc/documents/projects/2-chalmers-lane-devonport/content/preliminary-risk-assessment.yml — Identified Site Conditions",
+    "confirm": "Chalmers Lane wording for Beardwood Contractors, not yet approved by TEXC for reuse (C33). Review it against this site before issuing.",
+    "items": [
+      "Steep and irregular excavation geometry.",
+      "Exposed rock faces and significant elevation changes.",
+      "Loose and previously disturbed rock.",
+      "Existing rubble throughout working areas.",
+      "Restricted personnel and equipment access.",
+      "Limited areas available for equipment positioning.",
+      "Adjacent residential structures and other sensitive assets.",
+      "Existing retaining structures immediately adjacent to sections of the excavation.",
+      "Potential for displaced material to travel downslope.",
+      "Difficult access for placement and recovery of heavy protective materials.",
+      "Existing excavator operations within the work area.",
+      "Previously drilled holes containing expanding grout.",
+      "Requirement for compressed-air hoses and drilling equipment to traverse restricted areas.",
+      "Incomplete visibility of portions of the final excavation and underlying rock."
+    ]
+  },
+  "constraints": {
+    "source": "texc/documents/projects/2-chalmers-lane-devonport/content/project-understanding.yml — Current Site Constraints",
+    "confirm": "Chalmers Lane wording for Beardwood Contractors, not yet approved by TEXC for reuse (C33). Review it against this site before issuing.",
+    "rows": [
+      {
+        "constraint": "Restricted access",
+        "intent": "Equipment, hoses, mats and personnel must be moved through a confined and irregular work area. Access routes and handling arrangements will be confirmed before each stage."
+      },
+      {
+        "constraint": "Loose / falling material",
+        "intent": "Loose rock and rubble are present above and around proposed work areas. Immediate hazards are to be removed or controlled before personnel or blasting products are introduced."
+      },
+      {
+        "constraint": "Adjacent structures",
+        "intent": "Residential structures, retaining elements and other sensitive assets are located close to the excavation. Containment and monitoring requirements will be assessed for each individual work area."
+      },
+      {
+        "constraint": "Downslope movement",
+        "intent": "The terrain creates the potential for fragmented material to travel beyond the immediate firing area. Catchment / bund controls and staged extraction are intended to manage this exposure."
+      },
+      {
+        "constraint": "Blast mat handling",
+        "intent": "Protective mats are expected to be a key control. Their placement and recovery will require planning and, where practicable, mechanical assistance due to site access and mat weight."
+      },
+      {
+        "constraint": "Incomplete exposure",
+        "intent": "Rubble and existing material currently obscure parts of the final rock profile. Final quantities, drilling requirements and methodology therefore cannot be fully confirmed until further exposure."
+      }
+    ]
+  },
+  "riskIntro": {
+    "source": "texc/documents/projects/2-chalmers-lane-devonport/content/preliminary-risk-assessment.yml — Purpose and Status",
+    "confirm": "Chalmers Lane wording for Beardwood Contractors, not yet approved by TEXC for reuse (C33). Review it against this site before issuing.",
+    "paras": [
+      "This risk assessment has been prepared following an initial site inspection and is provided to {client} for review as part of the proposed works approval process.",
+      "The assessment reflects the site conditions and proposed scope visible and accessible at the time of inspection.",
+      "The excavation remains partially obscured by rubble, loose material and existing site conditions. Final work areas, drilling requirements and site-specific controls are therefore subject to verification following further exposure and preparation of the nominated areas.",
+      "**This assessment is subject to amendment where site conditions, identified hazards, scope of works or {client}' requirements change.**"
+    ]
+  },
+  "riskReview": {
+    "source": "texc/documents/projects/2-chalmers-lane-devonport/content/preliminary-risk-assessment.yml — Review and Variation",
+    "confirm": "Chalmers Lane wording for Beardwood Contractors, not yet approved by TEXC for reuse (C33). Review it against this site before issuing.",
+    "paras": [
+      "This document represents a **preliminary risk assessment only** and is specifically provided for {client}' review and approval.",
+      "The assessment will remain subject to review throughout preparation of the works.",
+      "Where further excavation, exposure of rock or changes to the construction site reveal conditions materially different from those observed during the initial inspection, TEXC will reassess the affected work area and amend the applicable controls before proceeding.",
+      "{client} may also request additional controls or amendments as part of its internal approval process."
+    ]
+  },
+  "statusCallout": {
+    "source": "texc/documents/projects/2-chalmers-lane-devonport/content/project-understanding.yml — closing callout, adapted to a proposal (C37)",
+    "lead": "Preliminary status:",
+    "text": "This proposal documents TEXC's current interpretation of the proposed works following the initial site inspection. It is not a final blast design or authority to undertake blasting. Final work areas, methodology and controls remain subject to further exposure, assessment and applicable approvals."
+  },
+  "matrixItems": [
+    "Site access and make-safe",
+    "Drilling",
+    "Explosives supply",
+    "Transport",
+    "Magazine",
+    "Exclusion-zone control",
+    "Traffic management",
+    "Neighbour notification",
+    "Vibration monitoring",
+    "Permits and approvals",
+    "Clearance",
+    "Services location",
+    "Post-blast scaling"
+  ],
+  "ratePresets": {
+    "source": "texc/documents/phase-2-proof/_ds/…/_ds_bundle.js — \"Rates\" component of a superseded prototype",
+    "confirm": "Rate from a superseded prototype, not confirmed by TEXC (C1)",
+    "lines": [
+      {
+        "desc": "Relief shotfirer / MMU operator",
+        "basis": "hourly",
+        "unit": "hr",
+        "rateCents": 15000
+      },
+      {
+        "desc": "Explosives labour / bench hand",
+        "basis": "hourly",
+        "unit": "hr",
+        "rateCents": 15000
+      },
+      {
+        "desc": "Mobilisation and accommodation",
+        "basis": "at-cost",
+        "unit": "item",
+        "rateCents": null
+      }
+    ],
+    "terms": {
+      "minimum": "4 hours per mobilisation",
+      "standby": "50% of the applicable hourly rate",
+      "travel": "Agreed rate or 50% of the hourly rate",
+      "mobilisation": "At cost + GST",
+      "invoicing": "Weekly or per mobilisation",
+      "payment": "14-day terms"
+    }
+  },
+  "letterTemplate": {
+    "confirm": "Covering-letter template drafted by Brand in Black, not yet approved by TEXC (C12)",
+    "paras": [
+      "Thank you for the opportunity to support {client} on the {site} works. This proposal sets out our current understanding of the work, how we would approach it, and what we would need from your team to proceed.",
+      "It is a preliminary proposal. It follows our initial site inspection and supports your review and approval process — it does not authorise blasting. Final work areas, methodology and controls will be confirmed once the site is prepared and assessed.",
+      "We work inside your systems, inductions and site procedures, and the documentation is handled as part of the job. If anything here does not match how the site actually runs, tell us and we will revise it."
+    ]
+  }
+}

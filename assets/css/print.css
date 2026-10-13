@@ -19,7 +19,7 @@
     font-family: "Arial Narrow", Arial, sans-serif;
     font-size: 7.5pt;
     letter-spacing: 0.1em;
-    color: #57524a;
+    color: var(--ink-on-paper-muted);
   }
   @bottom-right {
     content: "Page " counter(page) " of " counter(pages);
@@ -27,12 +27,12 @@
     font-size: 7.5pt;
     letter-spacing: 0.1em;
     text-transform: uppercase;
-    color: #57524a;
+    color: var(--ink-on-paper-muted);
   }
 }
 
 html, body {
-  background: #fff !important;
+  background: var(--white) !important;
   color: var(--ink-on-paper) !important;
   -webkit-print-color-adjust: exact;
   print-color-adjust: exact;
@@ -52,7 +52,7 @@ html { scroll-padding-top: 0; }
 
 /* All sections print on paper, whatever their screen surface. */
 .sec, .sec[data-surface] {
-  background: #fff !important;
+  background: var(--white) !important;
   color: var(--ink-on-paper) !important;
   padding: 0 0 8mm;
   break-inside: auto;
@@ -95,7 +95,7 @@ html { scroll-padding-top: 0; }
 /* Cover: one page, photo kept but calmer. */
 .cover { min-height: 0; height: 250mm; padding: 0; display: flex; align-items: flex-end; break-after: page; position: relative; overflow: hidden; }
 .cover-media img { filter: none; }
-.cover-scrim { background: linear-gradient(180deg, rgb(17 17 17 / 0.2), rgb(17 17 17 / 0.85)) !important; }
+.cover-scrim { background: linear-gradient(180deg, rgb(var(--ink-rgb) / 0.2), rgb(var(--ink-rgb) / 0.85)) !important; }
 .cover-in { padding: 12mm; }
 .cover-title, .cover-site, .cover-meta dd, .cover-meta dt { color: var(--white) !important; }
 .cover-credit { color: var(--steel-200) !important; }
@@ -103,13 +103,13 @@ html { scroll-padding-top: 0; }
 
 /* Ink cards print as outlined paper cards. */
 .glance, .strip, .doccard, .flow-step, .person, .policy, .att, .accept-form, .notice--dark, .steps4 li {
-  background: #fff !important;
+  background: var(--white) !important;
   border-color: var(--doc-rule) !important;
   color: var(--ink-on-paper) !important;
   box-shadow: none !important;
 }
 .glance { background: var(--doc-rule) !important; }
-.glance-cell { background: #fff !important; min-height: 0; }
+.glance-cell { background: var(--white) !important; min-height: 0; }
 .glance-cell dt, .doccard-cat, .doccard-code, .strip-body, .flow-line, .accept-dl dt, .foot-ref dt, .foot-legal { color: var(--ink-on-paper-muted) !important; }
 .glance-cell--total dd, .accept-total dd, .strip-label, .flow-n, .doccard-id { color: var(--doc-gold-text) !important; }
 .doccard-id { background: var(--doc-band); }
@@ -118,7 +118,7 @@ html { scroll-padding-top: 0; }
 .foot-links a { color: var(--doc-gold-text) !important; }
 
 /* The acceptance form prints as a sign-off block, not inputs. */
-.field input { background: #fff !important; border-color: var(--ink-on-paper-muted) !important; color: var(--ink) !important; }
+.field input { background: var(--white) !important; border-color: var(--ink-on-paper-muted) !important; color: var(--ink) !important; }
 .check { color: var(--ink) !important; }
 
 /* Keep things whole. */

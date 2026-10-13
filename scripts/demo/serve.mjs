@@ -12,7 +12,8 @@
 import { createServer } from 'node:http';
 import { readFileSync, existsSync, statSync } from 'node:fs';
 import { resolve, dirname, extname, normalize, sep } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { EDITOR_CSP } from '../../lib/csp.js';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const TYPES = {
@@ -38,6 +39,20 @@ export function startServer({ port = 4310, overrides = {} } = {}) {
     const url = new URL(req.url, 'http://local');
     let path = decodeURIComponent(url.pathname);
     for (const h of rules.headers) if (h.re.test(path)) for (const { key, value } of h.headers) res.setHeader(key, overrides[key] ?? value);
+    if (path === '/editor' || path === '/editor/') {
+      // The editor is a generated string module, served the way api/editor.js
+      // will serve it (Phase 3) — never a static file. Re-imported per request
+      // so a rebuild shows up without restarting.
+      const file = resolve(ROOT, 'lib/editor-html.js');
+      const stamp = existsSync(file) ? statSync(file).mtimeMs : 0;
+      import(pathToFileURL(file).href + '?t=' + stamp).then(({ EDITOR_HTML }) => {
+        res.setHeader('Content-Security-Policy', EDITOR_CSP);
+        res.setHeader('Cache-Control', 'no-store');
+        res.setHeader('Content-Type', 'text/html; charset=utf-8');
+        res.end(EDITOR_HTML);
+      }, () => { res.statusCode = 500; res.end('Build the editor first: node scripts/build.mjs'); });
+      return;
+    }
     if (path === '/') path = '/demo';
     for (const r of rules.rewrites) if (r.re.test(path)) { path = r.to; break; }
     const rel = normalize(path).replace(/^[/\\]+/, '');
@@ -58,5 +73,5 @@ export function startServer({ port = 4310, overrides = {} } = {}) {
 if (import.meta.url === `file://${process.argv[1]}`) {
   const i = process.argv.indexOf('--port');
   const port = i > 0 ? Number(process.argv[i + 1]) : 4310;
-  startServer({ port }).then(() => console.log(`http://127.0.0.1:${port}/demo  (headers from vercel.json)`));
+  startServer({ port }).then(() => console.log(`http://127.0.0.1:${port}/demo  and  /editor  (headers from vercel.json)`));
 }
