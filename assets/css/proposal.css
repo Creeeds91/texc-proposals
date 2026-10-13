@@ -780,3 +780,33 @@ mark.confirm { background: var(--stop); color: var(--white); font-family: var(--
   .sec-head { gap: var(--space-3); }
 }
 @media (max-width: 900px) and (min-width: 641px) { .topbar-actions .chip { display: none; } }
+
+/* ---- The gate: nothing of the proposal shows until it is decrypted ------ */
+
+html[data-boot="gate"]:not(.unlocked) body > :not(#gate):not(noscript) { display: none !important; }
+html[data-boot="gate"]:not(.unlocked) body { background: var(--ink); }
+.gate { position: fixed; inset: 0; z-index: 400; display: grid; place-items: center; padding: var(--space-5) var(--gutter); background: var(--ink); overflow-y: auto; }
+.gate[hidden] { display: none; }
+.gate::before { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 3px; background: var(--gold-gradient); }
+.gate-card { width: min(440px, 100%); padding: var(--space-8) var(--space-6); border: 1px solid var(--ink-600); border-top: 2px solid var(--gold); background: var(--ink-800); box-shadow: var(--shadow-lg); }
+.gate-card[hidden] { display: none; }
+.gate-logo { display: block; height: 40px; width: auto; margin-bottom: var(--space-6); }
+.gate-eyebrow { font-family: var(--font-display); font-weight: 700; font-size: 12px; letter-spacing: var(--tracking-label); text-transform: uppercase; color: var(--gold); margin-bottom: var(--space-2); }
+.gate-title { font-family: var(--font-heading); font-weight: 800; text-transform: uppercase; font-size: clamp(24px, 6vw, 30px); line-height: 1.05; color: var(--white); margin-bottom: var(--space-5); }
+.gate-form { display: grid; gap: var(--space-3); }
+.gate-label { font-family: var(--font-display); font-weight: 700; font-size: 11px; letter-spacing: var(--tracking-label); text-transform: uppercase; color: var(--steel-300); }
+.gate-input { width: 100%; height: 48px; padding: 0 14px; border: 1px solid var(--ink-600); border-radius: var(--radius-md); background: var(--ink); color: var(--white); font: inherit; font-size: 17px; letter-spacing: 0.02em; }
+.gate-input:focus { outline: none; border-color: var(--gold); box-shadow: 0 0 0 3px var(--focus-ring); }
+.gate-show { display: flex; align-items: center; gap: var(--space-2); font-size: 13.5px; color: var(--steel-300); cursor: pointer; }
+.gate-show input { width: 16px; height: 16px; accent-color: var(--gold); }
+.gate-go { width: 100%; margin-top: var(--space-2); }
+.gate-msg { min-height: 1.4em; font-size: 14px; color: var(--hazard); }
+.gate-help { margin-top: var(--space-4); font-size: 14px; line-height: 1.55; color: var(--steel-300); }
+.gate-help a { color: var(--gold); }
+.gate-noscript { padding: var(--space-8) var(--gutter); color: var(--white); background: var(--ink); text-align: center; }
+.foot-revs { font-size: 13px; color: var(--steel-300); }
+.foot-revs a { color: var(--gold); }
+@media print { .gate { display: none !important; } }
+.gate-code { font-family: var(--font-heading); font-size: 24px; letter-spacing: 0.3em; }
+.gate-link { border: 0; background: none; padding: 0; color: var(--gold); font: inherit; text-decoration: underline; cursor: pointer; }
+body.signin { background: var(--ink); }

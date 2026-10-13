@@ -1,7 +1,8 @@
-scripts/
+# Vercel serves static files ONLY from public/ (vercel.json outputDirectory),
+# which scripts/build.mjs --public fills from an explicit list. Everything
+# below is still uploaded where the build needs it (templates/, content/,
+# fixtures/, scripts/), but nothing outside public/ is ever a URL.
 docs/
-templates/
-content/
 supabase/
 demo-out/
 *.md

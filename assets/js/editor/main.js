@@ -5,20 +5,25 @@
  *   - one panel per section, in page order: show/hide, drag (or Alt+↑/↓) to
  *     reorder, and a badge saying what is left to do
  *   - fields write straight into the draft config; rows add/duplicate/move/delete
- *   - autosave to this browser (Phase 3 moves drafts to the server)
- *   - the pre-publish checklist, from the same rules the server will apply
+ *   - autosave to the server, with a copy in this browser until it lands and a
+ *     plain choice when a colleague saved first (store.js)
+ *   - the pre-publish checklist, from the same rules the server applies, and
+ *     publishing from it (checklist.js)
  *
+ * /editor/<id> opens a proposal; /editor alone opens the list of proposals.
  * Phone: the drawer is a full-screen sheet with an Edit / Preview switch.
  */
 import { applyConfig, initEffects } from '../proposal.js';
-import { SECTIONS, PINNED_FIRST, PINNED_LAST, visibleSections } from '../schema.js';
+import { SECTIONS, PINNED_FIRST, PINNED_LAST, visibleSections, STATUS } from '../schema.js';
 import { runChecks } from '../checks.js';
 import { h, icon, getIn, setIn, clone, announce, toPath } from './dom.js';
 import { panelFor } from './panels.js';
 import { renderField } from './fields.js';
-import { loadDraft, autosaver, clearDraft } from './store.js';
-import { previewMedia } from './media.js';
+import { serverSaver, readBackup, clearBackup } from './store.js';
+import { previewMedia, uploadMedia } from './media.js';
 import { openChecklist } from './checklist.js';
+import { api } from './api.js';
+import { openPeople } from './people.js';
 
 const D = document;
 const ROOT = D.documentElement;
@@ -29,8 +34,10 @@ const LIB = readJson('library-data');
 const LABEL = Object.fromEntries(SECTIONS.map((s) => [s.id, s.label]));
 const MOVABLE = (id) => !PINNED_FIRST.includes(id) && !PINNED_LAST.includes(id);
 const HIDEABLE = (id) => id !== 'cover' && id !== 'contact';
+const PROPOSAL_ID = (location.pathname.match(/^\/editor\/([0-9a-f-]{36})\/?$/) || [])[1] || '';
 
-const state = { cfg: null, open: new Set(['cover']), checks: null };
+const state = { cfg: null, open: new Set(['cover']), checks: null, who: null, proposal: null };
+let saver = { touch() {}, flush: async () => true, force: async () => true, adopt() {}, dirty: () => false, version: () => 0 };
 
 /* ---------------------------------------------------------- the draft */
 
@@ -43,7 +50,7 @@ export function newProposal() {
   return {
     v: 1,
     template: TPL.version || 1,
-    meta: { docType: 'shotfiring', status: 'draft' },
+    meta: { docType: 'shotfiring', status: 'preliminary' },
     layout: { sections: SECTIONS.map((s) => ({ id: s.id, on: !s.off })) },
     scope: { matrix: (LIB.matrixItems || []).map((item) => ({ item, party: { $confirm: `Who is responsible for ${item.toLowerCase()}` } })) },
     terms: {},
@@ -65,17 +72,18 @@ function normaliseLayout(cfg) {
 
 /* -------------------------------------------------------------- context */
 
-const saver = autosaver(() => state.cfg, (status, at) => {
+const timeOf = (iso) => new Date(iso).toLocaleTimeString('en-AU', { hour: 'numeric', minute: '2-digit' });
+
+function onSaveState(status, detail) {
   const el = D.getElementById('ed-saved');
   if (!el) return;
   el.dataset.state = status;
-  if (status === 'saved') {
-    const t = new Date(at).toLocaleTimeString('en-AU', { hour: 'numeric', minute: '2-digit' });
-    el.textContent = `Saved ${t} · this browser`;
-  } else if (status === 'saving') el.textContent = 'Saving…';
+  if (status === 'saved') el.textContent = `Saved ${timeOf(detail || new Date().toISOString())}`;
+  else if (status === 'saving') el.textContent = 'Saving…';
   else if (status === 'dirty') el.textContent = 'Unsaved changes';
-  else if (status === 'error') el.textContent = 'Could not save — this browser’s storage is full or blocked';
-});
+  else if (status === 'conflict') el.textContent = 'Not saved — someone else saved this proposal';
+  else if (status === 'error') el.textContent = `Not saved yet — ${detail || 'trying again shortly'}. Your changes are kept in this browser.`;
+}
 
 let previewQueued = false;
 function schedulePreview() {
@@ -83,8 +91,17 @@ function schedulePreview() {
   previewQueued = true;
   requestAnimationFrame(async () => {
     previewQueued = false;
-    applyConfig(await previewMedia(state.cfg));
+    applyConfig(withIssue(await previewMedia(state.cfg, PROPOSAL_ID)));
   });
+}
+
+/** The preview shows the real reference and revision once there is one (the server sets them at publish). */
+function withIssue(cfg) {
+  const p = state.proposal;
+  if (!p || !p.reference) return cfg;
+  const current = (p.revisions || []).find((r) => r.current);
+  const issueDate = current ? new Intl.DateTimeFormat('en-CA', { timeZone: 'Australia/Hobart' }).format(new Date(current.publishedAt)) : undefined;
+  return { ...cfg, meta: { ...(cfg.meta || {}), reference: p.reference, rev: current ? current.label : undefined, issueDate } };
 }
 
 let badgeTimer = null;
@@ -96,6 +113,10 @@ function scheduleBadges() {
 const ctx = {
   TPL, LIB, BRAND,
   cfg: () => state.cfg,
+  who: () => state.who,
+  isAdmin: () => !!state.who && (state.who.role === 'admin' || state.who.role === 'super'),
+  proposalId: () => PROPOSAL_ID,
+  proposal: () => state.proposal,
   get: (path) => getIn(state.cfg, path),
   set(path, value, { structural = false, quiet = false } = {}) {
     setIn(state.cfg, toPath(path), value === undefined ? undefined : value);
@@ -104,6 +125,30 @@ const ctx = {
     schedulePreview();
     if (structural) renderDrawer();
     else scheduleBadges();
+  },
+  /** Replace the whole draft (the demo, an import). */
+  replace(cfg, message) {
+    state.cfg = normaliseLayout(clone(cfg));
+    state.open = new Set(['cover']);
+    saver.touch();
+    renderDrawer();
+    schedulePreview();
+    window.scrollTo(0, 0);
+    announce(message);
+  },
+  flush: () => saver.flush(),
+  version: () => saver.version(),
+  async uploadMedia(id, media) {
+    toast('Uploading the photograph…');
+    const ok = await uploadMedia(PROPOSAL_ID, id, media);
+    const now = ctx.get(['media', id]);
+    if (ok && now) { ctx.set(['media', id], { ...now, pending: undefined }, { structural: true }); toast('Photograph stored.'); }
+    else if (!ok) toast('The photograph did not upload. Choose it again to retry.');
+  },
+  async refreshProposal() {
+    if (!PROPOSAL_ID) return;
+    const r = await api('GET', `/api/proposals?id=${PROPOSAL_ID}`);
+    if (r.ok) { state.proposal = r.json; renderStatus(); schedulePreview(); }
   },
   checkCtx: () => ({ today: today(), services: TPL.services, register: TPL.register, brand: BRAND.name }),
   reveal(section, field) {
@@ -270,23 +315,104 @@ function renderDrawer() {
   updateBadges();
 }
 
-/* -------------------------------------------------------------- actions */
 
-function load(cfg, message) {
-  state.cfg = normaliseLayout(clone(cfg));
-  state.open = new Set(['cover']);
-  saver.touch();
-  saver.flush();
-  renderDrawer();
-  schedulePreview();
-  window.scrollTo(0, 0);
-  announce(message);
+/* -------------------------------------------------------------- status */
+
+/** Under the drawer's title: the reference, where it stands, and the link. */
+function renderStatus() {
+  const el = D.getElementById('ed-status');
+  if (!el) return;
+  const p = state.proposal;
+  if (!p) { el.replaceChildren(h('span', { text: PROPOSAL_ID ? '' : 'No proposal open' })); return; }
+  const current = (p.revisions || []).find((r) => r.current);
+  const bits = [p.reference || 'Not yet issued'];
+  if (current) bits.push(`Rev ${current.label} ${p.status === 'withdrawn' ? 'withdrawn' : 'issued'}`);
+  if (p.openCount) bits.push(`opened ${p.openCount}×`);
+  el.replaceChildren(h('span', { text: bits.join(' · ') }));
+  if (p.url && p.status === 'issued') {
+    el.append(h('button', { type: 'button', class: 'ed-linkbtn', onclick: () => copy(p.url, 'Client link copied') }, ' Copy link'));
+  }
 }
+
+async function copy(text, done) {
+  try { await navigator.clipboard.writeText(text); toast(done); }
+  catch { window.prompt('Copy this:', text); }
+}
+
+/* -------------------------------------------------------------- dialogs */
+
+function dialog(title, ...body) {
+  const dlg = h('dialog', { class: 'ed-dialog', 'aria-label': title });
+  dlg.append(h('div', { class: 'ed-dialog-head' }, h('h2', { text: title }), h('button', { type: 'button', class: 'ed-icon', 'aria-label': 'Close', onclick: () => dlg.close() }, icon('x'))), ...body);
+  dlg.addEventListener('close', () => dlg.remove());
+  D.body.append(dlg);
+  dlg.showModal();
+  return dlg;
+}
+
+/** The list of proposals: open one, or start a new one. */
+async function openPicker({ closable = true } = {}) {
+  const listBox = h('div', { class: 'ed-list' }, h('p', { class: 'ed-hint', text: 'Loading…' }));
+  const dlg = dialog('Proposals',
+    h('div', { class: 'ed-rows-tools' },
+      h('button', { type: 'button', class: 'btn btn--primary btn--sm', onclick: () => createAndOpen(newProposal()) }, icon('plus'), h('span', { text: 'New proposal' })),
+      h('button', { type: 'button', class: 'btn btn--secondary btn--sm', onclick: async () => {
+        const r = await api('GET', '/api/editor?fixture=demo');
+        if (r.ok) createAndOpen(r.json);
+      } }, icon('book-open'), h('span', { text: 'New from the demo (fictional)' }))),
+    listBox);
+  dlg.classList.add('ed-dialog--wide');
+  if (!closable) {
+    dlg.addEventListener('cancel', (e) => e.preventDefault());
+    dlg.querySelector('.ed-dialog-head .ed-icon').remove();
+  }
+  const r = await api('GET', '/api/proposals');
+  const rows = (r.ok && r.json.proposals) || [];
+  listBox.replaceChildren(rows.length
+    ? h('ul', { class: 'ed-proposals' }, rows.map((p) => h('li', {},
+      h('a', { href: `/editor/${p.id}`, class: 'ed-proposal' },
+        h('span', { class: 'ed-proposal-ref', text: p.reference || 'Draft' }),
+        h('span', { class: 'ed-proposal-name', text: [p.project || 'Untitled', p.client_company].filter(Boolean).join(' — ') }),
+        h('span', { class: 'ed-proposal-meta', text: `${STATUS[p.status] || p.status} · updated ${new Date(p.updated_at).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })}` })))))
+    : h('p', { class: 'ed-hint', text: 'No proposals yet. Start one above.' }));
+}
+
+async function createAndOpen(cfg) {
+  const r = await api('POST', '/api/proposals', { action: 'create', config: cfg });
+  if (r.ok) location.assign(`/editor/${r.json.id}`);
+  else toast((r.json && r.json.error) || 'The proposal could not be created.');
+}
+
+/** Someone else saved first: show both choices plainly; never overwrite silently. */
+function showConflict(info) {
+  const when = info && info.updated_at ? timeOf(info.updated_at) : '';
+  const dlg = dialog('Someone else saved this proposal',
+    h('p', { class: 'ed-hint ed-block', text: `${(info && info.updated_by) || 'A colleague'} saved it${when ? ` at ${when}` : ''}, after you opened it. Your latest changes are not saved yet.` }),
+    h('div', { class: 'ed-dialog-foot' },
+      h('button', { type: 'button', class: 'btn btn--primary btn--sm', onclick: async () => {
+        dlg.close();
+        const r = await api('GET', `/api/drafts?id=${PROPOSAL_ID}`);
+        if (!r.ok) return;
+        saver.adopt(r.json.version);
+        state.cfg = normaliseLayout(r.json.config || {});
+        renderDrawer();
+        schedulePreview();
+        onSaveState('saved', r.json.updated_at);
+        toast('Loaded their version.');
+      } }, 'Load theirs (lose my changes)'),
+      h('button', { type: 'button', class: 'btn btn--secondary btn--sm', onclick: async () => {
+        dlg.close();
+        if (await saver.force()) toast('Saved yours over theirs. This is recorded.');
+      } }, 'Keep mine (replace theirs)')));
+  dlg.addEventListener('cancel', (e) => e.preventDefault());
+}
+
+/* -------------------------------------------------------------- actions */
 
 function exportJson() {
   const blob = new Blob([JSON.stringify(state.cfg, null, 2) + '\n'], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
-  const a = h('a', { href: url, download: `${(state.cfg.meta?.reference || 'proposal-draft').replace(/[^\w.-]+/g, '-')}.json` });
+  const a = h('a', { href: url, download: `${(state.proposal?.reference || 'proposal-draft').replace(/[^\w.-]+/g, '-')}.json` });
   D.body.append(a);
   a.click();
   a.remove();
@@ -302,7 +428,7 @@ function importJson() {
     try {
       const cfg = JSON.parse(await file.text());
       if (!cfg || typeof cfg !== 'object' || Array.isArray(cfg)) throw new Error('not a proposal');
-      load(cfg, `Imported ${file.name}`);
+      if (window.confirm(`Replace this proposal's content with ${file.name}?`)) ctx.replace(cfg, `Imported ${file.name}`);
     } catch {
       window.alert('That file is not a proposal config.');
     }
@@ -311,20 +437,56 @@ function importJson() {
   input.click();
 }
 
+async function adminAction(action, confirmText) {
+  if (confirmText && !window.confirm(confirmText)) return null;
+  const note = action === 'withdraw' ? window.prompt('Why is it being withdrawn? (kept in the record)') : '';
+  if (action === 'withdraw' && note === null) return null;
+  const r = await api('POST', '/api/proposals', { action, id: PROPOSAL_ID, note });
+  if (!r.ok) { toast((r.json && r.json.error) || 'That did not work.'); return null; }
+  await ctx.refreshProposal();
+  return r.json;
+}
+
+function secretDialog(title, lines) {
+  dialog(title, ...lines.map(([label, value, hint]) => h('div', { class: 'ed-secret' },
+    h('p', { class: 'ed-label', text: label }),
+    h('div', { class: 'ed-secret-row' }, h('code', { text: value }), h('button', { type: 'button', class: 'btn btn--secondary btn--sm', onclick: () => copy(value, `${label} copied`) }, 'Copy')),
+    hint ? h('p', { class: 'ed-hint', text: hint }) : null)));
+}
+
 function menu() {
-  const dlg = h('dialog', { class: 'ed-dialog ed-menu', 'aria-label': 'Draft' });
-  const item = (text, iconName, fn) => h('button', { type: 'button', class: 'ed-menu-item', onclick: () => { dlg.close(); fn(); } }, icon(iconName), h('span', { text }));
+  const p = state.proposal;
+  const admin = ctx.isAdmin();
+  const dlg = h('dialog', { class: 'ed-dialog ed-menu', 'aria-label': 'Menu' });
+  const item = (text, iconName, fn, enabled = true) => h('button', { type: 'button', class: 'ed-menu-item', disabled: !enabled, onclick: () => { dlg.close(); fn(); } }, icon(iconName), h('span', { text }));
+  const issued = p && p.url && p.status === 'issued';
   dlg.append(
-    h('div', { class: 'ed-dialog-head' }, h('h2', { text: 'Draft' }), h('button', { type: 'button', class: 'ed-icon', 'aria-label': 'Close', onclick: () => dlg.close() }, icon('x'))),
-    item('New proposal', 'file-text', () => { if (window.confirm('Start a new proposal? This replaces the draft in this browser.')) load(newProposal(), 'New proposal started'); }),
-    item('Load the demo proposal', 'book-open', async () => {
-      if (!window.confirm('Load the demo (fictional client)? This replaces the draft in this browser.')) return;
-      const res = await fetch('/fixtures/demo-proposal.json', { cache: 'no-store' });
-      load(await res.json(), 'Demo proposal loaded');
-    }),
-    item('Import a config (.json)', 'upload', importJson),
+    h('div', { class: 'ed-dialog-head' }, h('h2', { text: 'Menu' }), h('button', { type: 'button', class: 'ed-icon', 'aria-label': 'Close', onclick: () => dlg.close() }, icon('x'))),
+    item('All proposals', 'list', () => openPicker()),
+    item('New proposal', 'file-text', () => createAndOpen(newProposal())),
+    item('Replace with the demo (fictional client)', 'book-open', async () => {
+      if (!window.confirm('Replace this proposal’s content with the demo? This cannot be undone.')) return;
+      const r = await api('GET', '/api/editor?fixture=demo');
+      if (r.ok) ctx.replace(r.json, 'Demo loaded');
+    }, !!PROPOSAL_ID),
+    item('Import a config (.json)', 'upload', importJson, !!PROPOSAL_ID),
     item('Export this draft (.json)', 'download', exportJson),
-    h('p', { class: 'ed-hint', text: 'Duplicating a proposal and starting a new revision arrive with the archive in Phase 3.' }),
+    issued ? item('Copy the client link', 'external-link', () => copy(p.url, 'Client link copied')) : null,
+    admin && p && p.reference ? item('Show the passphrase (recorded)', 'lock', async () => {
+      const r = await adminAction('passphrase');
+      if (r) secretDialog('Passphrase', [['Passphrase', r.passphrase, 'Give it by phone or text message, never in the same email as the link. This read-back is recorded.']]);
+    }) : null,
+    admin && p && p.reference ? item('New link and passphrase', 'alert-triangle', async () => {
+      const r = await adminAction('rotate', 'The current link will stop working at once, for everyone who has it. Make a new link and passphrase?');
+      if (r) secretDialog('New link and passphrase', [['Client link', r.url], ['Passphrase', r.passphrase, 'Send the link and the passphrase separately.']]);
+    }) : null,
+    admin && issued ? item('Withdraw this proposal', 'x', async () => {
+      const r = await adminAction('withdraw', 'Withdraw it? The client link will stop working. Publishing again issues a new revision behind the same link.');
+      if (r) toast('Withdrawn. The link no longer opens.');
+    }) : null,
+    admin ? item('People', 'users', () => openPeople(ctx)) : null,
+    item('Sign out', 'arrow-left', async () => { await saver.flush(); await api('POST', '/api/auth?action=signout'); location.assign('/signin'); }),
+    h('p', { class: 'ed-hint', text: state.who ? `Signed in as ${state.who.email} (${{ super: 'Brand in Black', admin: 'administrator', editor: 'editor', viewer: 'viewer' }[state.who.role] || state.who.role}).` : '' }),
   );
   dlg.addEventListener('close', () => dlg.remove());
   D.body.append(dlg);
@@ -336,9 +498,10 @@ function buildShell() {
     h('div', { class: 'ed-top' },
       h('div', { class: 'ed-brand' }, h('img', { src: BRAND.logoGold, alt: BRAND.name, width: 72, height: 28 }), h('span', { text: 'Editor' })),
       h('div', { class: 'ed-top-actions' },
-        h('button', { type: 'button', class: 'btn btn--secondary btn--sm', onclick: menu }, icon('menu'), h('span', { text: 'Draft' })),
+        h('button', { type: 'button', class: 'btn btn--secondary btn--sm', id: 'ed-menu', onclick: menu }, icon('menu'), h('span', { text: 'Menu' })),
         h('button', { type: 'button', class: 'btn btn--primary btn--sm', id: 'ed-check', onclick: () => openChecklist(ctx) }, icon('file-check'), h('span', { text: 'Checklist' }), h('span', { class: 'ed-count-pill', id: 'ed-check-count' })))),
-    h('p', { class: 'ed-saved', id: 'ed-saved', role: 'status', 'aria-live': 'polite', text: 'Draft in this browser' }),
+    h('p', { class: 'ed-status', id: 'ed-status' }),
+    h('p', { class: 'ed-saved', id: 'ed-saved', role: 'status', 'aria-live': 'polite', text: '' }),
     h('div', { class: 'ed-panels', id: 'ed-panels' }),
     h('div', { class: 'ed-toast', id: 'ed-toast', hidden: true }));
   const bar = h('nav', { class: 'ed-mobilebar', 'aria-label': 'Editor view' },
@@ -363,22 +526,53 @@ function setMode(mode) {
 
 async function boot() {
   ROOT.classList.add('js', 'ed-on');
-  const saved = loadDraft();
-  state.cfg = normaliseLayout(saved ? saved.cfg : newProposal());
+  const me = await api('GET', '/api/auth?action=me');
+  if (!me.ok) return; // api() has sent the browser to sign in
+  state.who = me.json;
   buildShell();
+
+  if (!PROPOSAL_ID) {
+    state.cfg = normaliseLayout(newProposal());
+    renderDrawer();
+    renderStatus();
+    applyConfig(state.cfg);
+    initEffects(D);
+    ROOT.classList.add('ready');
+    if (location.hash === '#people' && ctx.isAdmin()) openPeople(ctx);
+    else openPicker({ closable: false });
+    window.__editor = { ctx, state };
+    return;
+  }
+
+  const r = await api('GET', `/api/drafts?id=${PROPOSAL_ID}`);
+  if (!r.ok) { D.getElementById('ed-saved').textContent = (r.json && r.json.error) || 'This proposal could not be opened.'; openPicker({ closable: false }); return; }
+  state.proposal = r.json.proposal;
+  state.cfg = normaliseLayout(r.json.config || {});
+  saver = serverSaver({ id: PROPOSAL_ID, getCfg: () => state.cfg, version: r.json.version, onState: onSaveState, onConflict: showConflict });
+  onSaveState('saved', r.json.updated_at);
+
+  // Changes this browser kept but the server never received.
+  const backup = readBackup(PROPOSAL_ID);
+  if (backup && backup.baseVersion === r.json.version && JSON.stringify(backup.cfg) !== JSON.stringify(r.json.config)) {
+    const dlg = dialog('Unsaved changes found',
+      h('p', { class: 'ed-hint ed-block', text: `This browser kept changes from ${timeOf(backup.at)} that did not reach the server.` }),
+      h('div', { class: 'ed-dialog-foot' },
+        h('button', { type: 'button', class: 'btn btn--primary btn--sm', onclick: () => { dlg.close(); ctx.replace(backup.cfg, 'Unsaved changes restored'); } }, 'Restore them'),
+        h('button', { type: 'button', class: 'btn btn--secondary btn--sm', onclick: () => { dlg.close(); clearBackup(PROPOSAL_ID); } }, 'Discard them')));
+  } else if (backup) clearBackup(PROPOSAL_ID);
+
   renderDrawer();
-  applyConfig(await previewMedia(state.cfg));
+  renderStatus();
+  applyConfig(withIssue(await previewMedia(state.cfg, PROPOSAL_ID)));
   initEffects(D);
   ROOT.classList.add('ready');
-  if (saved) {
-    const t = new Date(saved.savedAt).toLocaleTimeString('en-AU', { hour: 'numeric', minute: '2-digit' });
-    D.getElementById('ed-saved').textContent = `Saved ${t} · this browser`;
-  }
-  window.addEventListener('beforeunload', () => saver.flush());
+  if (location.hash === '#people' && ctx.isAdmin()) openPeople(ctx);
+
+  window.addEventListener('beforeunload', (e) => { if (saver.dirty()) { saver.flush(); e.preventDefault(); } });
   D.addEventListener('keydown', (e) => {
-    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); saver.touch(); saver.flush(); announce('Saved'); }
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); saver.flush().then((ok) => ok && announce('Saved')); }
   });
-  window.__editor = { ctx, state, load, newProposal, clearDraft };
+  window.__editor = { ctx, state, saver: () => saver };
 }
 
 boot();

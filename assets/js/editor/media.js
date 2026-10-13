@@ -7,11 +7,12 @@
  *    JPEG 0.85 otherwise. Re-encoding through a canvas also drops the file's
  *    metadata — including any GPS location a phone wrote into it, which a
  *    shotfiring proposal must never carry.
- *  - Phase 2 keeps uploads in this browser (IndexedDB). Phase 3 sends the same
- *    resized files to the private bucket by signed upload URL.
+ *  - The resized files are kept in this browser (IndexedDB) for an instant
+ *    preview and sent to the private bucket through /api/staff-media.
  */
 import { h, icon, nextId } from './dom.js';
 import { putBlob, getBlob } from './store.js';
+import { api } from './api.js';
 
 export const SLOTS = Object.freeze({
   cover: { widths: [800, 1400, 2000], label: 'Cover' },
@@ -36,6 +37,7 @@ export async function processUpload(file, slotName) {
   const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', buf));
   const id = 'u-' + [...digest.slice(0, 8)].map((b) => b.toString(16).padStart(2, '0')).join('');
   const bmp = await createImageBitmap(new Blob([buf], { type: file.type }), { imageOrientation: 'from-image' });
+  if (bmp.width < 600) { bmp.close(); throw new Error('That photograph is too small to print well. Use one at least 600 pixels wide.'); }
   const top = slot.widths[slot.widths.length - 1];
   const widths = [...new Set([...slot.widths.filter((w) => w < bmp.width), Math.min(bmp.width, top)])].sort((a, b) => a - b);
   let type = 'image/jpeg';
@@ -49,16 +51,37 @@ export async function processUpload(file, slotName) {
     await putBlob(`${id}-${w}`, blob);
   }
   bmp.close();
-  return { id, media: { local: true, widths, type, name: file.name.replace(/[^\w.\- ]+/g, '').slice(0, 80) } };
+  return { id, media: { pending: true, widths, type, name: file.name.replace(/[^\w.\- ]+/g, '').slice(0, 80) } };
 }
 
-/* A preview copy of the config whose local photographs point at blob: URLs. */
+/**
+ * Send an upload's resized files to the server (the private bucket). Until
+ * this finishes the draft marks the photograph `pending`, and the checklist
+ * will not publish a proposal whose photographs are not all stored.
+ */
+export async function uploadMedia(proposalId, id, media) {
+  const ext = media.type === 'image/jpeg' ? 'jpg' : 'webp';
+  for (const w of media.widths) {
+    const blob = await getBlob(`${id}-${w}`);
+    if (!blob) return false;
+    const r = await api('POST', `/api/staff-media?proposal=${encodeURIComponent(proposalId)}&file=${id}-${w}.${ext}`, undefined, { raw: blob });
+    if (!r.ok) return false;
+  }
+  return true;
+}
+
+/*
+ * A preview copy of the config whose uploaded photographs point at this
+ * browser's copy (blob: URLs) or, failing that, a one-hour signed link.
+ */
 const urlCache = new Map();
-export async function previewMedia(cfg) {
+const signed = new Map(); // id -> { srcset, at }
+export async function previewMedia(cfg, proposalId) {
   const media = cfg.media || {};
   const out = {};
+  const ask = {};
   for (const [id, m] of Object.entries(media)) {
-    if (!m || !m.local) { out[id] = m; continue; }
+    if (!m || !/^u-[a-f0-9]{16}$/.test(id)) { out[id] = m; continue; }
     const srcset = [];
     for (const w of m.widths || []) {
       const key = `${id}-${w}`;
@@ -68,16 +91,26 @@ export async function previewMedia(cfg) {
       }
       if (urlCache.has(key)) srcset.push([w, urlCache.get(key)]);
     }
-    if (srcset.length) out[id] = { srcset };
+    if (srcset.length === (m.widths || []).length && srcset.length) { out[id] = { srcset }; continue; }
+    const s = signed.get(id);
+    if (s && Date.now() - s.at < 45 * 60000) { out[id] = { srcset: s.srcset }; continue; }
+    ask[id] = { widths: m.widths, type: m.type };
+  }
+  if (proposalId && Object.keys(ask).length) {
+    const r = await api('POST', '/api/staff-media', { proposal: proposalId, media: ask });
+    for (const [id, v] of Object.entries((r.ok && r.json.media) || {})) {
+      signed.set(id, { srcset: v.srcset, at: Date.now() });
+      out[id] = { srcset: v.srcset };
+    }
   }
   return { ...cfg, media: out };
 }
 
 export function thumbFor(id, cfg, TPL) {
   const m = (cfg.media && cfg.media[id]) || null;
-  if (m && m.local) {
+  if (m) {
     const w = (m.widths || [])[0];
-    return urlCache.get(`${id}-${w}`) || '';
+    return urlCache.get(`${id}-${w}`) || (signed.get(id) && signed.get(id).srcset[0][1]) || '';
   }
   const p = TPL.photos && TPL.photos[id];
   return p ? p.path.replace('{w}', p.widths[0]) : '';

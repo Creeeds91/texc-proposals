@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en-AU" data-boot="signin">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<title>Sign in · {{brand.name}} Proposals</title>
+<link rel="icon" href="{{brand.logoGold}}" type="image/svg+xml">
+<link rel="preload" href="/assets/fonts/Oxanium-800-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/assets/css/tokens.css">
+<link rel="stylesheet" href="/assets/css/proposal.css">
+<script type="module" src="/assets/js/signin.js"></script>
+</head>
+<body class="signin">
+<main id="gate" class="gate">
+  <div class="gate-card" data-step="email">
+    <img class="gate-logo" src="{{brand.logoGold}}" alt="{{brand.name}}" width="132" height="52">
+    <p class="gate-eyebrow">Proposals · staff</p>
+    <h1 class="gate-title">Sign in</h1>
+    <form class="gate-form" id="email-form" novalidate>
+      <label class="gate-label" for="email">Work email</label>
+      <input class="gate-input" id="email" name="email" type="email" autocomplete="username" inputmode="email" required>
+      <button type="submit" class="btn btn--primary btn--lg gate-go">Email me a code</button>
+      <p class="gate-msg" id="email-msg" role="alert"></p>
+    </form>
+    <p class="gate-help">New here? Enter your work address and an administrator will be asked to approve you.</p>
+  </div>
+  <div class="gate-card" data-step="code" hidden>
+    <img class="gate-logo" src="{{brand.logoGold}}" alt="{{brand.name}}" width="132" height="52">
+    <p class="gate-eyebrow">Proposals · staff</p>
+    <h1 class="gate-title">Check your email</h1>
+    <p class="gate-help" id="code-sent">If that address has access, a six-digit code is on its way. It works once, for 15 minutes.</p>
+    <form class="gate-form" id="code-form" novalidate>
+      <label class="gate-label" for="code">Six-digit code</label>
+      <input class="gate-input gate-code" id="code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9 ]*" maxlength="7" required>
+      <button type="submit" class="btn btn--primary btn--lg gate-go">Sign in</button>
+      <p class="gate-msg" id="code-msg" role="alert"></p>
+    </form>
+    <p class="gate-help"><button type="button" class="gate-link" id="restart">Use a different address</button></p>
+  </div>
+</main>
+</body>
+</html>

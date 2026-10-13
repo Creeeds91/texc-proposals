@@ -31,7 +31,12 @@ function readJson(id) {
   try { return JSON.parse(el.textContent); } catch { return {}; }
 }
 const BRAND = readJson('brand-data');
-const TPL = readJson('template-data');
+const PAGE_TPL = readJson('template-data');
+// A published revision carries the website wording, services, people and
+// register it was issued with (config.tpl, written by lib/projection.js); those
+// win over the page's own copy, so a later website edit never changes an
+// issued proposal. The editor and the demo use the page's copy.
+let TPL = PAGE_TPL;
 
 /* ------------------------------------------------------------------ helpers */
 
@@ -724,6 +729,7 @@ function buildIndex(visible) {
 export function applyConfig(cfg) {
   captureDefaults();
   state.cfg = cfg && typeof cfg === 'object' ? cfg : {};
+  TPL = state.cfg.tpl && typeof state.cfg.tpl === 'object' ? { ...PAGE_TPL, ...state.cfg.tpl } : PAGE_TPL;
   // Optional quote items start from the proposal's own defaults; ticks the
   // client makes survive re-binding (the editor re-applies on every keystroke).
   const lines = list(state.cfg.quote && state.cfg.quote.lines);
@@ -859,6 +865,7 @@ export function initEffects(root = D) {
     if (box.checked) state.options.add(box.dataset.option);
     else state.options.delete(box.dataset.option);
     refreshQuote();
+    D.dispatchEvent(new CustomEvent('proposal:option', { detail: { option: box.dataset.option, on: box.checked } }));
   });
 
   // Prefilled acceptance fields stop following the config once someone types.
@@ -882,6 +889,8 @@ export function initEffects(root = D) {
   window.addEventListener('afterprint', afterPrint);
   D.querySelectorAll('[data-print]').forEach((b) => b.addEventListener('click', async () => {
     b.disabled = true;
+    // The gate refreshes short-lived photograph links first, if they are near expiry.
+    if (typeof hooks.beforePrint === 'function') { try { await hooks.beforePrint(); } catch { /* print what is loaded */ } }
     beforePrint();
     await whenImagesReady(D, 6000);
     b.disabled = false;
@@ -902,8 +911,9 @@ export function initEffects(root = D) {
       return;
     }
     note.dataset.tone = 'info';
-    note.textContent = state.cfg.__vt
-      ? 'Sending…'
+    // Phase 5 sends the acceptance. Until then an issued proposal says how to accept instead.
+    note.textContent = hooks.issued === true
+      ? `Online acceptance is not switched on for this proposal yet. To accept, email ${BRAND.email} or call ${BRAND.principalName} on ${BRAND.phoneDisplay}.`
       : 'Preview only — online acceptance opens when this proposal is issued.';
   });
 
@@ -911,9 +921,10 @@ export function initEffects(root = D) {
   D.addEventListener('click', (e) => {
     const b = e.target.closest && e.target.closest('[data-attachment]');
     if (!b) return;
-    if (!state.cfg.__vt) {
-      const n = b.closest('.att').querySelector('.att-meta');
-      if (n && !n.dataset.previewed) { n.dataset.previewed = '1'; n.append(D.createTextNode(' · Opens in the issued proposal')); }
+    const n = b.closest('.att').querySelector('.att-meta');
+    if (n && !n.dataset.previewed) {
+      n.dataset.previewed = '1';
+      n.append(D.createTextNode(hooks.issued === true ? ` · Available from ${BRAND.name} on request` : ' · Opens in the issued proposal'));
     }
   });
 
@@ -922,6 +933,10 @@ export function initEffects(root = D) {
 }
 
 /* -------------------------------------------------------------------- boot */
+
+/** Hooks for the gate (assets/js/gate.js): { issued: true, beforePrint: async () => {} }. */
+const hooks = {};
+export function setHooks(h) { Object.assign(hooks, h); }
 
 window.applyConfig = applyConfig;
 window.initEffects = initEffects;

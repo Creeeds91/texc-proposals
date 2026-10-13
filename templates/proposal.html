@@ -17,6 +17,32 @@
 <script type="module" src="/assets/js/proposal.js"></script>
 </head>
 <body>
+<div id="gate" class="gate" hidden>
+  <div class="gate-card" data-gate="form">
+    <img class="gate-logo" src="{{brand.logoGold}}" alt="{{brand.name}}" width="132" height="52">
+    <p class="gate-eyebrow">Private proposal</p>
+    <h2 class="gate-title" id="gate-title">Enter your passphrase</h2>
+    <form class="gate-form" id="gate-form" autocomplete="off" novalidate>
+      <label class="gate-label" for="gate-pass">Passphrase</label>
+      <input class="gate-input" id="gate-pass" name="passphrase" type="password" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" required aria-describedby="gate-msg gate-help">
+      <label class="gate-show"><input type="checkbox" id="gate-show"> Show passphrase</label>
+      <button type="submit" class="btn btn--primary btn--lg gate-go" id="gate-go">Open the proposal</button>
+      <p class="gate-msg" id="gate-msg" role="alert" aria-live="assertive"></p>
+    </form>
+    <p class="gate-help" id="gate-help">{{brand.name}} gives you the passphrase separately, by phone or text message. If you do not have it, call {{brand.principalName}} on <a href="{{brand.phoneHref}}">{{brand.phoneDisplay}}</a>.</p>
+  </div>
+  <div class="gate-card" data-gate="gone" hidden>
+    <img class="gate-logo" src="{{brand.logoGold}}" alt="{{brand.name}}" width="132" height="52">
+    <p class="gate-eyebrow">Private proposal</p>
+    <h2 class="gate-title">This link is no longer active</h2>
+    <p class="gate-help">The proposal may have been replaced, withdrawn or reached its expiry date. For the current link, call {{brand.principalName}} on <a href="{{brand.phoneHref}}">{{brand.phoneDisplay}}</a> or email <a href="mailto:{{brand.email}}">{{brand.email}}</a>.</p>
+  </div>
+  <div class="gate-card" data-gate="wait" hidden>
+    <img class="gate-logo" src="{{brand.logoGold}}" alt="{{brand.name}}" width="132" height="52">
+    <p class="gate-help" data-gate-wait>Loading…</p>
+  </div>
+</div>
+<noscript><p class="gate-noscript">This proposal needs JavaScript switched on to open.</p></noscript>
 <a class="skip" href="#main">Skip to the proposal</a>
 
 <div id="pbar" class="pbar" aria-hidden="true"><span></span></div>
@@ -584,6 +610,7 @@
     </div>
     <div class="foot-bottom">
       <p class="foot-line" data-field="meta.footerLine" data-empty="{{brand.legalName}} · ABN {{brand.abn}}">{{brand.legalName}} · ABN {{brand.abn}}</p>
+      <p class="foot-revs" data-revisions hidden>Revisions: <span data-revision-links></span></p>
       <a href="{{brand.privacyHref}}">Privacy</a>
     </div>
   </div>

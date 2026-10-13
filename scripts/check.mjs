@@ -17,8 +17,12 @@
  *   confirm       a $confirm can never reach a client page            (browser)
  *   render        the demo renders with zero console errors or CSP violations (browser)
  *   print         every visible section prints, with ink, in an A4 PDF  (browser)
- *   editor        staff walk through the editor: edit, rows, undo, CONFIRM, photos,
- *                 checklist, autosave across a reload, phone layout   (browser)
+ *   schema        supabase/schema.sql stands up twice, locks down, keeps its promises   (Postgres + Docker)
+ *   envelope      server encryption opens with the browser's own code    (browser)
+ *   refusals      every bad client request gets the identical 410; staff endpoints refuse strangers   (stack)
+ *   editor        the editor against the real stack: edits, rows, CONFIRM, upload,
+ *                 checklist, server autosave, a colleague's conflicting save, phone   (stack + browser)
+ *   flow          staff to client: publish, unlock, revise, supersede, rotate, approve a person   (stack + browser)
  *   content-sync  website wording and tokens still match the website, and every
  *                 Chalmers-derived library line is still TEXC's exact wording (sibling ../texc)
  *
@@ -36,6 +40,7 @@ import { CLIENT_CSP, EDITOR_CSP } from '../lib/csp.js';
 import { quoteTotals, lineAmountCents, formatAUD, formatQty } from '../assets/js/money.js';
 import { runChecks } from '../assets/js/checks.js';
 import { scanText, localityWarning } from '../assets/js/sensitive.js';
+import { suiteSchema, suiteEnvelope, suiteRefusals, suiteEditor, suiteFlow, closeServerSuites } from './lib/server-suites.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (p) => readFileSync(resolve(ROOT, p), 'utf8');
@@ -60,7 +65,7 @@ const stripComments = (src) => src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|
 /* ------------------------------------------------------------- contract */
 
 const SECTIONS = ['cover', 'letter', 'glance', 'about', 'understanding', 'scope', 'site', 'method', 'params', 'env', 'risk', 'docs', 'logistics', 'team', 'programme', 'quote', 'attachments', 'terms', 'accept', 'contact'];
-const REQUIRED_IDS = ['main', 'topbar', 'pbar', 'index', 'sheet', 'flt', 'superseded', 'demo-chip', 'index-toggle', 'brand-data', 'template-data'];
+const REQUIRED_IDS = ['main', 'topbar', 'pbar', 'index', 'sheet', 'flt', 'superseded', 'demo-chip', 'index-toggle', 'brand-data', 'template-data', 'gate', 'gate-form', 'gate-pass', 'gate-msg'];
 const REQUIRED_FIELDS = ['documentTitle', 'meta.project', 'meta.docTypeLabel', 'meta.siteLine', 'meta.reference', 'meta.revLabel', 'meta.issueDateText', 'meta.validUntilText', 'meta.statusLabel', 'meta.footerLine', 'client.company', 'client.contactLine', 'letter.greetingName', 'quote.subtotalText', 'quote.gstText', 'quote.totalText', 'accept.clause'];
 const REQUIRED_IMGS = ['cover.image', 'letter.portrait', 'understanding.sitePlan', 'contact.photo'];
 const REQUIRED_ROWS = ['understanding.photos', 'scope.services', 'scope.matrix', 'site.meta', 'site.constraints', 'method.steps', 'risk.hazards', 'risk.holdPoints', 'docs.items', 'team.people'];
@@ -90,8 +95,9 @@ function contractProblems(html) {
     const v = path.split('.').reduce((o, k) => (o == null ? undefined : o[k]), data.snap);
     if (typeof v !== 'string') problems.push(`data-snap="${path}" has no text in the snapshot`);
   }
-  // Reserved ids the gate (Phase 3) will own.
-  for (const id of ['gate', 'gate-form', 'gate-pass']) if (has(new RegExp(`\\sid="${id}"`))) problems.push(`#${id} is reserved for the gate`);
+  // The gate's states: the passphrase form, the dead-link card, the wait card.
+  for (const state of ['form', 'gone', 'wait']) if (!has(new RegExp(`data-gate="${state}"`))) problems.push(`the gate has no data-gate="${state}" card`);
+  if (!has(/data-revision-links/)) problems.push('no data-revision-links (the client cannot move between revisions)');
   return problems;
 }
 
@@ -130,7 +136,7 @@ const BRAND_PATTERNS = [/TEXC/, /0467\s?651\s?182/, /47\s?688\s?368\s?881/, /man
 
 function suiteBrand() {
   const files = [
-    ...walk('api', ['.js']), ...walk('lib', ['.js']).filter((f) => f !== 'lib/brand.js' && f !== 'lib/editor-html.js'),
+    ...walk('api', ['.js']), ...walk('lib', ['.js']).filter((f) => !['lib/brand.js', 'lib/editor-html.js', 'lib/signin-html.js', 'lib/template-data.js', 'lib/demo-fixture.js'].includes(f)),
     ...walk('assets/js', ['.js']), ...walk('scripts', ['.mjs', '.js']).filter((f) => f !== 'scripts/check.mjs'),
     ...walk('templates', ['.html']),
   ];
@@ -156,11 +162,14 @@ function suiteCsp() {
   let views;
   try { views = build({ write: false }); }
   catch (e) { return { status: FAIL, detail: [e.message] }; }
+  const HTML_MODULES = new Set(['lib/editor-html.js', 'lib/signin-html.js']);
   for (const [name, body] of Object.entries(views)) {
     const isEditor = name === 'lib/editor-html.js';
-    // The editor is a string module; check the page inside it, under the editor's rules.
-    const html = isEditor ? JSON.parse(body.slice(body.indexOf('= ') + 2, body.lastIndexOf(';'))) : body;
-    try { checkView(name, html, { allowEditor: isEditor }); } catch (e) { problems.push(e.message); }
+    // Pages served by functions are string modules; check the page inside them.
+    if (name.endsWith('.html') || HTML_MODULES.has(name)) {
+      const html = HTML_MODULES.has(name) ? JSON.parse(body.slice(body.indexOf('= ') + 2, body.lastIndexOf(';'))) : body;
+      try { checkView(name, html, { allowEditor: isEditor }); } catch (e) { problems.push(e.message); }
+    }
     const committed = existsSync(resolve(ROOT, name)) ? read(name) : '';
     if (committed !== body) problems.push(`${name} is stale — run node scripts/build.mjs`);
   }
@@ -480,7 +489,7 @@ async function suiteConfirm() {
   await ed.page.close();
   return fails.length
     ? { status: FAIL, detail: fails }
-    : { status: PASS, detail: [`published page shows no CONFIRM; editor mode shows ${marks} tags`, 'server-side publish refusal arrives with Phase 3'] };
+    : { status: PASS, detail: [`published page shows no CONFIRM; editor mode shows ${marks} tags`, 'the server-side publish refusal is proved by the refusals suite'] };
 }
 
 async function suitePrint() {
@@ -517,143 +526,13 @@ async function suitePrint() {
   return fails.length ? { status: FAIL, detail: fails } : { status: PASS, detail: [`${headings.length} section headings found in a ${pages}-page A4 PDF (demo-out/demo-proposal-A4.pdf)`] };
 }
 
-/* --------------------------------------------------------------- editor */
-
-async function suiteEditor() {
-  if (!(await browserSession())) return { status: SKIP, detail: ['Playwright not found'] };
-  const fails = [];
-  const expect = (cond, what) => { if (!cond) fails.push(what); };
-  const { page, problems } = await openPage('/editor');
-  page.on('dialog', (d) => d.accept());
-  const cfg = () => page.evaluate(() => window.__editor.state.cfg);
-  const blockers = () => page.evaluate(() => window.__editor.state.checks.blockers.map((b) => b.message));
-  const settle = () => page.waitForTimeout(350); // past the badge debounce and a preview frame
-  await page.waitForFunction(() => window.__editor && document.querySelectorAll('.ed-panel').length === 20, null, { timeout: 15000 });
-  expect(await page.evaluate(() => window.__editor.state.checks.blockers.length) >= 12, 'a new proposal does not list what it lacks');
-  await page.evaluate(async () => { const r = await fetch('/fixtures/demo-proposal.json'); window.__editor.load(await r.json(), 'demo'); });
-  await settle();
-
-  // Typing goes straight to the page.
-  await page.fill('[data-path="meta.project"] input', 'Controlled rock removal, Stage 3');
-  await settle();
-  expect(await page.textContent('.cover-title span') === 'Controlled rock removal, Stage 3', 'typing the project did not update the cover');
-  expect(await page.textContent('.topbar-project') === 'Controlled rock removal, Stage 3', 'typing the project did not update the top bar');
-
-  // Show / hide, and reorder from the keyboard.
-  await page.click('.ed-panel[data-sec="about"] .ed-switch');
-  await page.click('.ed-panel[data-sec="params"] .ed-switch');
-  await settle();
-  expect(await page.evaluate(() => document.getElementById('about').hidden && !document.getElementById('params').hidden), 'the show/hide switches did not reach the page');
-  await page.focus('.ed-panel[data-sec="site"] .ed-handle');
-  await page.keyboard.press('Alt+ArrowUp');
-  await settle();
-  const order = (await cfg()).layout.sections.map((x) => x.id);
-  const pageOrder = await page.$$eval('#main > [data-sec]', (els) => els.map((e) => e.id));
-  expect(order.indexOf('site') < order.indexOf('scope') && pageOrder.indexOf('site') < pageOrder.indexOf('scope'), 'Alt+Up did not move Site above Scope on the page');
-  expect(await page.evaluate(() => document.activeElement?.closest('.ed-panel')?.dataset.sec === 'site'), 'focus left the moved handle');
-  expect(order[0] === 'cover' && order.at(-1) === 'contact' && order.at(-2) === 'accept', 'pinned sections moved');
-
-  // Rows: delete with undo, add, and an empty row blocks publishing.
-  await page.click('.ed-panel[data-sec="risk"] .ed-panel-toggle');
-  await settle();
-  const n0 = (await cfg()).risk.hazards.length;
-  await page.click('.ed-panel[data-sec="risk"] [data-path="risk.hazards"] .ed-row .ed-danger >> nth=0');
-  await settle();
-  expect((await cfg()).risk.hazards.length === n0 - 1, 'delete did not remove the hazard');
-  await page.click('#ed-toast button');
-  await settle();
-  expect((await cfg()).risk.hazards.length === n0, 'Undo did not restore the hazard');
-  await page.click('.ed-panel[data-sec="risk"] [data-path="risk.hazards"] > .ed-rows-tools > button >> nth=0');
-  await settle();
-  expect((await cfg()).risk.hazards.length === n0 + 1, 'Add did not append a hazard');
-  expect((await blockers()).some((m) => /Hazard \d+ is empty/.test(m)), 'an empty hazard row did not block publishing');
-  await page.click('.ed-panel[data-sec="risk"] [data-path="risk.hazards"] .ed-row .ed-danger >> nth=-1');
-  await settle();
-
-  // CONFIRM: flagging keeps what was typed, the preview shows the tag, confirming restores it.
-  await page.click('.ed-panel[data-sec="letter"] .ed-panel-toggle');
-  await settle();
-  const greet = '.ed-panel[data-sec="letter"] [data-path="letter.greetingName"]';
-  const before = (await cfg()).letter.greetingName;
-  await page.click(`${greet} .ed-flag`);
-  await settle();
-  const flagged = (await cfg()).letter.greetingName;
-  expect(flagged && flagged.$confirm && flagged.suggested === before, 'flagging CONFIRM lost the text that was there');
-  expect(await page.isVisible('#letter mark.confirm'), 'a CONFIRM did not show in the preview');
-  expect((await blockers()).some((m) => m.startsWith('Unconfirmed')), 'a CONFIRM did not block publishing');
-  await page.click(`${greet} .ed-linkbtn:has-text("Confirmed")`);
-  await settle();
-  expect((await cfg()).letter.greetingName === before && !(await page.isVisible('#letter mark.confirm')), '"Confirmed — use this text" did not restore it');
-
-  // Photographs: a new choice starts without the old alt text; an upload is resized and kept locally.
-  await page.click('[data-path="cover.image"] button:has-text("Change")');
-  await page.click('dialog .ed-photo >> nth=1');
-  await settle();
-  expect(!(await cfg()).cover.image.alt, 'a new photograph inherited the previous alt text');
-  expect((await blockers()).some((m) => /no alt text/.test(m)), 'a photograph without alt text did not block publishing');
-  await page.click('[data-path="cover.image"] button:has-text("Change")');
-  await page.waitForSelector('dialog .ed-photo');
-  const png = await page.evaluate(() => { const c = document.createElement('canvas'); c.width = 2400; c.height = 1600; const g = c.getContext('2d'); g.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--gold'); g.fillRect(0, 0, 2400, 1600); return c.toDataURL('image/png').split(',')[1]; });
-  await page.setInputFiles('dialog input[type=file]', { name: 'site-walk.png', mimeType: 'image/png', buffer: Buffer.from(png, 'base64') });
-  await page.waitForFunction(() => /^u-/.test(window.__editor.state.cfg.cover?.image?.id || ''), null, { timeout: 15000 });
-  await page.fill('[data-path="cover.image"] input >> nth=0', 'Rock face at the Stage 3 corridor');
-  await settle();
-  const up = await page.evaluate(() => { const id = window.__editor.state.cfg.cover.image.id; return { m: window.__editor.state.cfg.media[id], src: document.querySelector('img[data-img="cover.image"]').currentSrc }; });
-  expect(up.m && up.m.local && Math.max(...up.m.widths) <= 2000 && up.src.startsWith('blob:'), `an upload was not resized and previewed (${JSON.stringify(up.m)})`);
-
-  // The checklist, ticked through, reaches "Ready" on the demo as loaded.
-  await page.evaluate(async () => { const r = await fetch('/fixtures/demo-proposal.json'); const c = await r.json(); c.meta.project = 'Controlled rock removal, Stage 3'; window.__editor.load(c, 'demo'); });
-  await settle();
-  await page.click('#ed-check');
-  await page.waitForSelector('dialog .ed-verdict');
-  const boxes = await page.$$('dialog .ed-ack input');
-  for (const b of boxes) await b.check();
-  expect(/Ready to publish/.test(await page.textContent('dialog .ed-verdict')), 'acknowledging everything did not reach "Ready to publish"');
-  await page.click('dialog .ed-dialog-head button');
-
-  // Autosave survives a reload; print never shows the drawer.
-  await page.keyboard.press('Control+s');
-  await page.reload({ waitUntil: 'networkidle' });
-  await page.waitForFunction(() => window.__editor, null, { timeout: 15000 });
-  await settle();
-  expect(await page.textContent('.cover-title span') === 'Controlled rock removal, Stage 3', 'the draft did not survive a reload');
-  expect((await cfg()).acks?.length === boxes.length, 'acknowledgements did not survive a reload');
-  await page.emulateMedia({ media: 'print' });
-  expect(await page.evaluate(() => getComputedStyle(document.getElementById('ed')).display === 'none' && parseFloat(getComputedStyle(document.body).paddingLeft) === 0), 'the drawer shows in print');
-  await page.close();
-  fails.push(...problems);
-
-  // Phone: a full-screen sheet with Edit / Preview, nothing overlapping or wider than the screen.
-  const phone = await openPage('/editor', { width: 390, height: 844 });
-  await phone.page.waitForFunction(() => window.__editor, null, { timeout: 15000 });
-  await phone.page.evaluate(async () => { const r = await fetch('/fixtures/demo-proposal.json'); window.__editor.load(await r.json(), 'demo'); });
-  await phone.page.waitForTimeout(350);
-  const lay = await phone.page.evaluate(() => {
-    const r = (s) => document.querySelector(s).getBoundingClientRect();
-    const a = r('.ed-brand'), b = r('.ed-top-actions');
-    return { drawer: r('#ed').width, overlap: a.right > b.left + 1, wide: document.getElementById('ed').scrollWidth > window.innerWidth };
-  });
-  expect(lay.drawer === 390 && !lay.overlap && !lay.wide, `phone layout: drawer ${lay.drawer}px, header overlap ${lay.overlap}, too wide ${lay.wide}`);
-  await phone.page.click('#ed-mode-preview');
-  expect(await phone.page.evaluate(() => getComputedStyle(document.getElementById('ed')).display === 'none' && document.documentElement.scrollWidth <= window.innerWidth), 'Preview did not show the page full width');
-  await phone.page.click('#ed-mode-edit');
-  expect(await phone.page.isVisible('#ed'), 'Edit did not bring the sheet back');
-  await phone.page.close();
-  fails.push(...phone.problems);
-
-  return fails.length ? { status: FAIL, detail: fails } : { status: PASS, detail: [
-    'typing, show/hide, keyboard reorder, rows with undo, CONFIRM flag and restore',
-    'photo choice clears alt, upload resized and previewed, checklist reaches Ready',
-    'autosave survives a reload; no drawer in print; phone Edit/Preview with no overlap',
-  ] };
-}
-
 /* ---------------------------------------------------------------- run */
 
 const SUITES = {
   contract: suiteContract, brand: suiteBrand, csp: suiteCsp, conventions: suiteConventions, quote: suiteQuote,
   design: suiteDesign, rules: suiteRules,
-  confirm: suiteConfirm, render: suiteRender, print: suitePrint, editor: suiteEditor, 'content-sync': suiteContentSync,
+  confirm: suiteConfirm, render: suiteRender, print: suitePrint, 'content-sync': suiteContentSync,
+  schema: suiteSchema, envelope: () => suiteEnvelope({ browserSession }), refusals: suiteRefusals, editor: suiteEditor, flow: suiteFlow,
 };
 
 const wanted = args.filter((a) => !a.startsWith('--'));
@@ -672,5 +551,6 @@ for (const n of names) {
   else if (r.status === SKIP && worst === 0) worst = 3;
 }
 if (browserCtx) { await browserCtx.browser.close(); browserCtx.server.close(); }
+await closeServerSuites();
 console.log(worst === 0 ? '\nAll checks passed.' : worst === 3 ? '\nNothing failed, but something was NOT CHECKED (see SKIP above).' : '\nChecks FAILED.');
 process.exit(worst);

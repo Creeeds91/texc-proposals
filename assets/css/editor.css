@@ -229,3 +229,25 @@ html.ed-collapsed .ed-collapse { left: 16px; }
   .ed, .ed-collapse, .ed-mobilebar { display: none !important; }
   html.ed-on body { padding-left: 0 !important; }
 }
+
+/* ---- Phase 3: status, proposals, people, secrets ------------------------ */
+
+.ed-status { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2); padding: 0 var(--space-4) 2px; font-size: 12.5px; color: var(--steel-200); }
+.ed-status:empty { display: none; }
+.ed-menu-item:disabled { opacity: 0.4; cursor: default; }
+.ed-proposals { display: grid; gap: var(--space-2); margin-top: var(--space-4); }
+.ed-proposal { display: grid; gap: 2px; padding: var(--space-3) var(--space-4); border: 1px solid var(--ink-600); border-radius: var(--radius-md); background: var(--ink); color: var(--white); text-decoration: none; }
+.ed-proposal:hover, .ed-proposal:focus-visible { border-color: var(--gold); }
+.ed-proposal-ref { font-family: var(--font-display); font-weight: 700; font-size: 11px; letter-spacing: var(--tracking-label); text-transform: uppercase; color: var(--gold); }
+.ed-proposal-name { font-weight: 700; font-size: 14.5px; }
+.ed-proposal-meta { font-size: 12.5px; color: var(--steel-400); }
+.ed-people { display: grid; gap: var(--space-2); margin-top: var(--space-4); }
+.ed-person { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-3); border: 1px solid var(--ink-600); border-radius: var(--radius-md); background: var(--ink); }
+.ed-person.is-pending { border-color: var(--caution); }
+.ed-person-who { display: grid; gap: 2px; min-width: 0; }
+.ed-person-who strong { font-size: 14px; overflow-wrap: anywhere; }
+.ed-person-tools { display: flex; gap: var(--space-2); align-items: center; }
+.ed-person-role { width: auto; min-height: 34px; padding-top: 4px; padding-bottom: 4px; }
+.ed-secret { margin-top: var(--space-4); }
+.ed-secret-row { display: flex; gap: var(--space-2); align-items: center; margin-top: 6px; }
+.ed-secret-row code { flex: 1; min-width: 0; padding: 10px 12px; border: 1px solid var(--ink-600); border-radius: var(--radius-md); background: var(--ink); color: var(--gold); font-family: Menlo, Consolas, monospace; font-size: 14px; overflow-wrap: anywhere; }

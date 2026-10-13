@@ -602,3 +602,63 @@ These are rough figures for the quoting conversation, at $120/hr ex GST. Each ph
 3. Start Phase 1.
 
 Work goes on a feature branch and nothing reaches `main` without your say.
+
+---
+
+## 14. Phase 3 as built (13 Oct 2026)
+
+Where the build refines the plan above. Each is a deliberate change, recorded
+so the plan and the code do not disagree silently.
+
+**Two-layer encryption, so rotation never touches what was published.** §1
+said each revision is encrypted under the passphrase. As built, each revision's
+bytes are encrypted ONCE under a random 256-bit content key
+(`texc_proposal_revisions.enc`, immutable), and only that key is wrapped by the
+passphrase-derived key (PBKDF2-SHA256, 600,000 rounds, fresh salt) in
+`texc_revision_keys`. "Rotate link and passphrase" re-wraps those keys in one
+transaction (`texc_rotate`); the ciphertext and its `enc_sha256` never change,
+which keeps the immutability triggers absolute. `lib/envelope.js` (server) and
+`assets/js/envelope-client.js` (browser) are the two halves;
+`check.mjs envelope` proves they agree.
+
+**References are claimed before the bytes are built.** The reference is printed
+inside the encrypted proposal, so it must exist before encryption:
+`texc_claim_reference` allocates it on the first publish attempt and the
+proposal keeps it forever (no gaps between proposals). The revision letter is
+checked under the row lock by `texc_publish`; if someone published in between,
+it refuses with 409 and the server rebuilds once with the next letter.
+
+**Errors carry HTTP status codes from the database.** Conflicts raise
+PostgREST's `PT409` / `PT404`, not `40001` (which PostgREST retries).
+
+**Website wording is frozen into each revision.** The published config carries
+`tpl`: the locked lines, website snapshot text, and only the services, people,
+register entries and photographs it uses. The runtime prefers it over the
+page's own copy, so a website edit never changes an issued proposal.
+
+**Photographs go through our own function.** Uploads POST to
+`/api/staff-media` (magic bytes and size checked, content-addressed paths,
+never overwritten) rather than to a signed upload URL, so the editor's
+`connect-src` stays `'self'`. Clients get one-hour signed links for exactly
+the photographs their revision names. `img-src` allows `https://*.supabase.co`
+until the project exists; narrow it to the one origin then (`lib/csp.js`).
+
+**Static files are an explicit list.** Vercel serves only `public/`
+(`outputDirectory`), which `node scripts/build.mjs --public` fills with the
+assets, the client page and `robots.txt` — never `lib/`, `content/` or
+`templates/`. The demo page and fixture are added only with `DEMO_PUBLIC=1`.
+Proved on the first preview deployment (open item D1).
+
+**The editor has no separate dashboard yet.** `/editor` opens the list of
+proposals; People (approving access) is in the editor's menu for
+administrators. The archive and reporting dashboard remain Phase 6.
+
+**The server and the editor share one checklist.** Publishing re-runs
+`assets/js/checks.js` on the stored draft at the exact version the editor saw,
+then the allowlist projection, then a final scan of the bytes for `CONFIRM`.
+
+**Run it.** `node scripts/demo/local-app.mjs` starts real Postgres 16 and the
+real PostgREST (Docker) behind the real `api/*` handlers, with a file-backed
+stand-in for Storage and a local outbox for email. Nothing touches a hosted
+service. `node scripts/schema-standup-check.mjs` proves the schema on a fresh
+database.

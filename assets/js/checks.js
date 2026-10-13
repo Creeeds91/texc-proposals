@@ -107,6 +107,9 @@ export function runChecks(cfg = {}, ctx = {}) {
   };
   for (const key of Object.keys(cfg)) if (!SKIP_KEYS.has(key)) findImages(cfg[key], [key]);
   for (const [path, ref] of imageRefs) if (isVisible(path) && !str(ref.alt)) block(sectionOf(path), 'An image has no alt text', pathText(path));
+  for (const [path, ref] of imageRefs) {
+    if (isVisible(path) && cfg.media && cfg.media[ref.id] && cfg.media[ref.id].pending) block(sectionOf(path), 'A photograph has not finished uploading', pathText(path));
+  }
 
   // 4b. No blank rows: an added-but-empty row prints as an empty card or cell.
   const blank = (v) => (isConfirm(v) ? false : Array.isArray(v) ? v.every(blank) : v && typeof v === 'object' ? Object.values(v).every(blank) : !(typeof v === 'number' || typeof v === 'boolean' || str(v)));

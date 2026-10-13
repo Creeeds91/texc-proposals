@@ -3,13 +3,17 @@
   "private": true,
   "description": "Client shotfiring proposals: password-gated page, editor, archive. Brand in Black for TEXC Pty Ltd.",
   "type": "module",
-  "engines": { "node": ">=22.15" },
+  "engines": {
+    "node": ">=22.15"
+  },
   "scripts": {
     "build": "node scripts/build.mjs",
     "check": "node scripts/check.mjs",
     "dev": "node scripts/demo/serve.mjs",
     "capture": "node scripts/demo/capture.mjs",
-    "sync": "node scripts/texc-content-sync.mjs"
+    "sync": "node scripts/texc-content-sync.mjs",
+    "local": "node scripts/demo/local-app.mjs",
+    "schema": "node scripts/schema-standup-check.mjs"
   },
   "dependencies": {}
 }

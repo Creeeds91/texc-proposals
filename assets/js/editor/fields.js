@@ -168,7 +168,10 @@ function image(spec, ctx, path) {
         type: 'button', class: 'btn btn--secondary btn--sm', onclick: async () => {
           const picked = await pickImage({ TPL: ctx.TPL, brand: ctx.BRAND.name, slot: spec.slot || 'photo', title: spec.label });
           if (!picked) return;
-          if (picked.media) ctx.set(['media', picked.id], picked.media, { quiet: true });
+          if (picked.media) {
+            ctx.set(['media', picked.id], picked.media, { quiet: true });
+            ctx.uploadMedia(picked.id, picked.media);
+          }
           // A new photograph starts with no alt text or credit: the old ones described a different image.
           ctx.set(path, { id: picked.id }, { structural: true });
         },

@@ -1,72 +1,91 @@
 /**
- * Where a draft lives in Phase 2: this browser only.
+ * Where a draft lives: on the server (PUT /api/drafts), with a copy in this
+ * browser until the server has it.
  *
- *   - the config in localStorage, autosaved: 2s after typing stops, and never
- *     more than 20s after the first unsaved change, however long the typing runs
- *   - uploaded photographs in IndexedDB, as already-resized blobs
- *
- * Phase 3 replaces both with the server (PUT /api/drafts with a version check,
- * signed uploads to the private bucket). The interface here is what the editor
- * calls, so that swap touches this file only.
+ *   - autosave: 2s after typing stops, and never more than 20s after the first
+ *     unsaved change, however long the typing runs
+ *   - every save names the version it was based on; if a colleague saved in
+ *     between, the server answers 409 and nothing is overwritten — the editor
+ *     asks what to do
+ *   - until a save lands, the config is also kept in localStorage, so a closed
+ *     tab or a dropped connection loses nothing; it is offered back on reopen
+ *   - uploaded photographs are kept in IndexedDB as already-resized blobs, for
+ *     an instant preview; the server copy is what a published proposal uses
  */
+import { api } from './api.js';
 
-const DRAFT_KEY = 'texc-proposals:draft';
 const DEBOUNCE_MS = 2000;
 const MAX_WAIT_MS = 20000;
+const RETRY_MS = 10000;
+const backupKey = (id) => `texc-proposals:backup:${id}`;
 
-export function loadDraft() {
-  try {
-    const raw = localStorage.getItem(DRAFT_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    return parsed && parsed.cfg ? parsed : null;
-  } catch {
-    return null;
-  }
+export function readBackup(id) {
+  try { const v = JSON.parse(localStorage.getItem(backupKey(id)) || 'null'); return v && v.cfg ? v : null; } catch { return null; }
 }
-
-export function writeDraft(cfg) {
-  const savedAt = new Date().toISOString();
-  localStorage.setItem(DRAFT_KEY, JSON.stringify({ cfg, savedAt }));
-  return savedAt;
+function writeBackup(id, cfg, baseVersion) {
+  try { localStorage.setItem(backupKey(id), JSON.stringify({ cfg, baseVersion, at: new Date().toISOString() })); } catch { /* storage full: the server copy still saves */ }
 }
-
-export function clearDraft() {
-  try { localStorage.removeItem(DRAFT_KEY); } catch { /* nothing to clear */ }
+export function clearBackup(id) {
+  try { localStorage.removeItem(backupKey(id)); } catch { /* nothing to clear */ }
 }
 
 /**
- * autosave(getCfg, onState) -> { touch(), flush(), dirty() }
- * onState('saving' | 'saved' | 'error' | 'dirty', isoTime?)
+ * serverSaver({ id, getCfg, version, onState, onConflict }) -> { touch, flush, force, dirty, version }
+ * onState('dirty' | 'saving' | 'saved' | 'error' | 'conflict', detail?)
  */
-export function autosaver(getCfg, onState) {
+export function serverSaver({ id, getCfg, version, onState, onConflict }) {
+  let current = version;
   let timer = null;
+  let backupTimer = null;
   let firstDirtyAt = 0;
+  let lastChangeAt = 0;
   let dirty = false;
-  const save = () => {
+  let blocked = false;
+  let inflight = null;
+
+  const save = async (force = false) => {
     clearTimeout(timer);
     timer = null;
-    if (!dirty) return;
+    if (inflight) { await inflight; if (!dirty) return true; }
+    if (!dirty || (blocked && !force)) return !dirty;
+    const cfg = getCfg();
+    const sentAt = Date.now();
     onState('saving');
-    try {
-      const at = writeDraft(getCfg());
-      dirty = false;
-      firstDirtyAt = 0;
-      onState('saved', at);
-    } catch {
-      onState('error');
+    inflight = api('PUT', '/api/drafts', { id, version: current, config: cfg, ...(force ? { force: true } : {}) });
+    const r = await inflight;
+    inflight = null;
+    if (r.ok) {
+      current = r.json.version;
+      blocked = false;
+      // Changes typed while this save was in the air still need saving.
+      if (lastChangeAt > sentAt) { firstDirtyAt = lastChangeAt; schedule(); onState('dirty'); }
+      else { dirty = false; firstDirtyAt = 0; clearBackup(id); onState('saved', r.json.updated_at); }
+      return true;
     }
+    if (r.status === 409) { blocked = true; onState('conflict', r.json); onConflict(r.json); return false; }
+    onState('error', r.json && r.json.error);
+    if (r.status !== 413) timer = setTimeout(() => save(), RETRY_MS);
+    return false;
+  };
+  const schedule = () => {
+    clearTimeout(timer);
+    const wait = Math.max(0, Math.min(DEBOUNCE_MS, firstDirtyAt + MAX_WAIT_MS - Date.now()));
+    timer = setTimeout(() => save(), wait);
   };
   return {
     touch() {
-      const now = Date.now();
-      if (!dirty) { dirty = true; firstDirtyAt = now; onState('dirty'); }
-      clearTimeout(timer);
-      const wait = Math.max(0, Math.min(DEBOUNCE_MS, firstDirtyAt + MAX_WAIT_MS - now));
-      timer = setTimeout(save, wait);
+      lastChangeAt = Date.now();
+      if (!dirty) { dirty = true; firstDirtyAt = lastChangeAt; onState('dirty'); }
+      clearTimeout(backupTimer);
+      backupTimer = setTimeout(() => writeBackup(id, getCfg(), current), 400);
+      if (!blocked) schedule();
     },
-    flush: save,
+    flush: () => save(false),
+    force: () => { dirty = true; return save(true); },
+    /** Take the server's copy after a conflict. */
+    adopt(v) { current = v; dirty = false; blocked = false; clearTimeout(timer); clearBackup(id); },
     dirty: () => dirty,
+    version: () => current,
   };
 }
 
@@ -96,12 +115,14 @@ export async function putBlob(key, blob) {
 }
 
 export async function getBlob(key) {
-  const db = await openDb();
-  const blob = await new Promise((resolve, reject) => {
-    const req = db.transaction(STORE).objectStore(STORE).get(key);
-    req.onsuccess = () => resolve(req.result || null);
-    req.onerror = () => reject(req.error);
-  });
-  db.close();
-  return blob;
+  try {
+    const db = await openDb();
+    const blob = await new Promise((resolve, reject) => {
+      const req = db.transaction(STORE).objectStore(STORE).get(key);
+      req.onsuccess = () => resolve(req.result || null);
+      req.onerror = () => reject(req.error);
+    });
+    db.close();
+    return blob;
+  } catch { return null; }
 }

@@ -66,16 +66,17 @@ function servicesPicker(ctx) {
       card.append(h('button', { type: 'button', class: 'ed-linkbtn', onclick: () => { const n = clone(ctx.get('scope.services')); delete n[i].safetyUnlockedBy; delete n[i].safety; ctx.set('scope.services', n, { structural: true }); } }, 'Restore the website safety line'));
     } else {
       card.append(h('div', { class: 'ed-locked' }, h('p', { class: 'ed-label' }, icon('lock'), ' Safety line (website, compliance-driven)'), h('p', { class: 'ed-locked-text', text: s.safety }),
-        h('button', {
-          type: 'button', class: 'ed-linkbtn', onclick: () => {
-            const who = window.prompt('Unlocking a compliance line is recorded against your name. Who is unlocking it? (admin only)');
-            if (!who || !who.trim()) return;
-            const n = clone(ctx.get('scope.services'));
-            n[i].safetyUnlockedBy = who.trim();
-            n[i].safety = s.safety;
-            ctx.set('scope.services', n, { structural: true });
-          },
-        }, 'Unlock (admin)')));
+        ctx.isAdmin()
+          ? h('button', {
+            type: 'button', class: 'ed-linkbtn', onclick: () => {
+              if (!window.confirm('Unlocking a compliance line is recorded against your name, and the proposal can then only be published by an administrator. Unlock it?')) return;
+              const n = clone(ctx.get('scope.services'));
+              n[i].safetyUnlockedBy = ctx.who().email;
+              n[i].safety = s.safety;
+              ctx.set('scope.services', n, { structural: true });
+            },
+          }, 'Unlock (administrator)')
+          : h('p', { class: 'ed-hint', text: 'Only an administrator can unlock this line.' })));
     }
     box.append(card);
   });
@@ -90,7 +91,7 @@ export function panelFor(id, ctx) {
   switch (id) {
     case 'cover': return [
       { type: 'select', path: 'meta.docType', label: 'Document type', options: opts(DOC_TYPES), noBlank: true, confirm: false },
-      { type: 'select', path: 'meta.status', label: 'Status chip (preview)', options: opts(STATUS), noBlank: true, confirm: false, help: 'From Phase 3 publishing sets this. Here it only changes the preview.' },
+      { type: 'select', path: 'meta.status', label: 'Status shown to the client', options: [['preliminary', STATUS.preliminary], ['issued', STATUS.issued]], noBlank: true, confirm: false, help: `The chip at the top of the client’s page. “Preliminary - For Review” is ${ctx.BRAND.name}’s own wording.` },
       { type: 'text', path: 'meta.project', label: 'Project', required: true, placeholder: 'e.g. Proposed specialist controlled rock removal' },
       { type: 'text', path: 'meta.siteLocality', label: 'Site locality', required: true, help: 'The suburb or locality only. Never a street address or coordinates.' },
       { type: 'select', path: 'meta.siteRegion', label: 'Region', options: regionOpts },
@@ -98,9 +99,14 @@ export function panelFor(id, ctx) {
       { type: 'text', path: 'client.contactName', label: 'Client contact', required: true },
       { type: 'text', path: 'client.contactPosition', label: 'Contact position' },
       { type: 'email', path: 'client.email', label: 'Client email', required: true, help: 'Used to send the link. Never shown on the page.', confirm: false },
-      { type: 'date', path: 'meta.issueDate', label: 'Issue date', help: 'Set when the proposal is published (Phase 3). Here it fills the preview.', confirm: false },
-      { type: 'date', path: 'meta.validUntil', label: 'Valid until', required: true, confirm: false },
-      { type: 'text', path: 'meta.reference', label: 'Reference', readonly: true, confirm: false, help: 'Allocated on first issue (Phase 3).' },
+      { type: 'date', path: 'meta.validUntil', label: 'Valid until', required: true, confirm: false, help: 'The client link stays open for 30 days after this date.' },
+      { type: 'custom', render: () => {
+        const p = ctx.proposal && ctx.proposal();
+        const current = p && (p.revisions || []).find((r) => r.current);
+        return h('div', { class: 'ed-field' }, h('p', { class: 'ed-label', text: 'Reference and issue date' }),
+          h('p', { class: 'ed-locked-text', text: p && p.reference ? `${p.reference}${current ? ` · Rev ${current.label} issued ${new Date(current.publishedAt).toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: 'numeric' })}` : ''}` : 'Allocated when it is first published.' }),
+          h('p', { class: 'ed-hint', text: 'Set by the system at publish, never typed.' }));
+      } },
       { type: 'text', path: 'meta.preparedBy', label: 'Prepared by', placeholder: ctx.BRAND.principalName },
       { type: 'image', path: 'cover.image', label: 'Cover photograph', slot: 'cover', required: true, credit: true },
     ];
