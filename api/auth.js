@@ -18,7 +18,7 @@ import { sendEmail, layout } from '../lib/notify-email.js';
 import { BRAND } from '../lib/brand.js';
 import {
   normEmail, startSignIn, consumeCode, codeShapeOk, createSession, sessionCookie, clearedCookie,
-  revokeSession, accountFor, findUser, isSuper, activeApprovers,
+  revokeSession, accountFor, findUser, isSuper, activeApprovers, spendCodes,
 } from '../lib/accounts.js';
 import { baseUrl } from '../lib/proposals.js';
 
@@ -27,7 +27,13 @@ export const config = { maxDuration: 10 };
 const CODE_PER_CALLER = 6;   // per 5 minutes
 const CODE_PER_EMAIL = 3;    // per 10 minutes
 const VERIFY_PER_EMAIL = 10; // per 15 minutes (one code's lifetime)
+const VERIFY_PER_DAY = 20;   // per address per day: a hard cap, fails closed
+const WRONG_PER_CODE = 5;    // wrong guesses before the outstanding code is thrown away
 const VERIFY_PER_CALLER = 30;
+// Every "email me a code" answer takes at least this long, so its timing does
+// not reveal whether the address has an account (sending mail takes time).
+const CODE_FLOOR_MS = 1800;
+const floor = (start) => new Promise((done) => setTimeout(done, Math.max(0, CODE_FLOOR_MS - (Date.now() - start))));
 
 const safeNext = (n) => (typeof n === 'string' && /^\/editor(\/[0-9a-f-]{36})?$/.test(n) ? n : '/editor');
 
@@ -48,13 +54,15 @@ export default async function handler(req, res) {
   const b = body(req, 4000);
 
   if (action === 'code') {
+    const start = Date.now();
     const email = normEmail(b.email);
     if (await rateLimited(d, req, 'signin-code', CODE_PER_CALLER, 300)) { tooMany(res); return; }
-    if (email && !(await rateLimited(d, { headers: {} }, `signin-mail:${keyedHash(email)}`, CODE_PER_EMAIL, 600))) {
+    if (email && !(await rateLimited(d, null, `signin-mail:${keyedHash(email)}`, CODE_PER_EMAIL, 600))) {
       const out = await startSignIn(d, email, callerHash(req));
       await mailFor(d, email, out);
     }
-    // The same answer, whatever happened.
+    // The same answer, in the same time, whatever happened.
+    await floor(start);
     res.status(200).json({ ok: true });
     return;
   }
@@ -64,8 +72,11 @@ export default async function handler(req, res) {
     const code = String(b.code || '').replace(/\s+/g, '');
     if (await rateLimited(d, req, 'signin-verify', VERIFY_PER_CALLER, 300)) { tooMany(res); return; }
     if (!email || !codeShapeOk(code)) { res.status(400).json({ error: 'That code did not work. Check it, or ask for a new one.' }); return; }
-    if (await limitStrict(d, `signin-guess:${keyedHash(email)}`, VERIFY_PER_EMAIL, 900)) { tooMany(res); return; }
+    const who = keyedHash(email);
+    if (await limitStrict(d, `signin-guess:${who}`, VERIFY_PER_EMAIL, 900) || await limitStrict(d, `signin-guess-day:${who}`, VERIFY_PER_DAY, 86400)) { tooMany(res); return; }
     const spent = await consumeCode(d, email, code);
+    // Too many wrong guesses and the code is gone: a guesser never gets more than a handful against any one code.
+    if (!spent && await limitStrict(d, `signin-wrong:${who}`, WRONG_PER_CODE, 900)) await spendCodes(d, email);
     const user = spent ? await findUser(d, email) : null;
     if (!spent || !user || (user.status !== 'active' && !isSuper(email))) {
       res.status(400).json({ error: 'That code did not work. Check it, or ask for a new one.' });

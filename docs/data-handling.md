@@ -1,0 +1,27 @@
+# Data handling
+
+What this system holds, where, and who can read it. Kept short and current;
+change it in the same commit as anything it describes.
+
+| What | Where | Readable by |
+|---|---|---|
+| Draft proposals (everything staff type, including the client's email) | `texc_drafts.config`, plaintext | The server (secret key); staff with an editor session |
+| Each published revision, exactly as the client receives it | `texc_proposal_revisions.published_text`, plaintext; `.enc`, encrypted | Plaintext: the server and staff tools. Encrypted copy: anyone holding the link, but only opened with the passphrase |
+| Passphrases | `texc_proposals.passphrase_enc`, sealed with `VAULT_KEY` (never in the database) | The server; an administrator by audited read-back |
+| Link tokens | `texc_proposals.access_token`, plaintext | The server; staff (to copy the link) |
+| Uploaded photographs | Storage bucket `texc-media`, private | One-hour signed links: staff in the editor, and a client for the photographs their revision names |
+| Staff accounts | `texc_users` (email, name, role, status) | The server; administrators in People |
+| Sign-in codes and sessions | `texc_login_tokens`, `texc_user_sessions`: SHA-256 hashes only | Nobody can recover a code or a session from them |
+| What clients did (opened, ticked an option, printed) | `texc_events`, `texc_proposal_views`: device family, region, a keyed hash of the IP — never the address | The server; staff (the archive, Phase 6) |
+| Who on the staff side did something sensitive | `texc_staff_audit`, append-only | The server; Brand in Black |
+
+The database has row-level security on every table and no policies, so the
+public (anon) key reads nothing. Everything goes through the server with the
+secret key. A copy of the database alone reveals drafts and published text,
+but no passphrase, no sign-in code and no session.
+
+Region: Supabase in Sydney (`ap-southeast-2`); Vercel functions pinned to
+`syd1`. Email goes through SMTP2GO.
+
+Still to settle: the privacy notice for proposals (C31), and how long drafts,
+views and events are kept.

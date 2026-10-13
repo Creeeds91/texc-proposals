@@ -477,3 +477,19 @@ begin
     execute format('grant execute on function public.%s to service_role', f);
   end loop;
 end $$;
+
+-- ---------------------------------------------------------------- storage buckets
+
+-- The three buckets, PRIVATE, with their size and type limits, declared here
+-- so privacy never rests on a dashboard setting. Supabase only: a plain
+-- Postgres (the local proof) has no storage schema, and this is skipped.
+do $$
+begin
+  if to_regclass('storage.buckets') is not null then
+    insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types) values
+      ('texc-media', 'texc-media', false, 3145728, array['image/webp', 'image/jpeg']),
+      ('texc-attachments', 'texc-attachments', false, 26214400, array['application/pdf']),
+      ('texc-acceptances', 'texc-acceptances', false, 1048576, array['image/png', 'text/html'])
+    on conflict (id) do update set public = false, file_size_limit = excluded.file_size_limit, allowed_mime_types = excluded.allowed_mime_types;
+  end if;
+end $$;

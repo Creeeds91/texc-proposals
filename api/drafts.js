@@ -12,7 +12,7 @@
 import { db, rest } from '../lib/db.js';
 import { body, refuseCrossSite, onlyMethods, noStore } from '../lib/http.js';
 import { requireRole } from '../lib/accounts.js';
-import { getDraft, summary } from '../lib/proposals.js';
+import { getDraft, summary, guardSafety } from '../lib/proposals.js';
 import { recordAudit } from '../lib/events.js';
 import { UUID_RE } from '../lib/tokens.js';
 import { rateLimited, tooMany } from '../lib/ratelimit.js';
@@ -45,6 +45,13 @@ export default async function handler(req, res) {
     return;
   }
   if (Buffer.byteLength(JSON.stringify(b.config)) > MAX_BYTES) { res.status(413).json({ error: 'This proposal is over 1 MB. Remove something large and try again.' }); return; }
+
+  // Safety lines: refused below administrator, stamped and recorded at administrator.
+  const stored = await getDraft(d, id);
+  if (!stored) { res.status(404).json({ error: 'No such proposal.' }); return; }
+  const safety = guardSafety(who, stored.config, b.config);
+  if (!safety.ok) { res.status(403).json({ error: safety.error }); return; }
+  if (safety.changed.length) await recordAudit(d, req, who, 'safety_unlocked', { proposalId: id, detail: { services: safety.changed } });
 
   const now = new Date().toISOString();
   let r = await rest(d, 'PATCH', `texc_drafts?proposal_id=eq.${id}&version=eq.${version}`, { config: b.config, version: version + 1, updated_at: now, updated_by: who.email });

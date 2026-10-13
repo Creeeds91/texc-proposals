@@ -70,7 +70,7 @@ export default async function handler(req, res) {
   }
   if (action === 'publish') {
     if (await rateLimited(d, req, `publish:${who.email}`, 20, 600)) { tooMany(res); return; }
-    answer(await publish(d, { ...who }, id, { version: b.version, changeNote: b.changeNote, emailClient: b.emailClient === true }));
+    answer(await publish(d, req, { ...who }, id, { version: b.version, changeNote: b.changeNote, emailClient: b.emailClient === true }));
     return;
   }
   if (action === 'withdraw') { if (!admin()) return; answer(await withdraw(d, req, who, id, b.note)); return; }

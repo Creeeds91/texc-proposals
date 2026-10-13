@@ -61,7 +61,10 @@ function servicesPicker(ctx) {
     const base = ['scope', 'services', i];
     const card = h('div', { class: 'ed-row' }, h('div', { class: 'ed-row-head' }, h('span', { class: 'ed-row-title', text: s.name })));
     card.append(renderField({ type: 'paras', path: [...base, 'scopeText'], label: 'Scope text', help: 'Starts as the website wording for this service. Leave it blank to use that wording.', placeholder: s.overview.join('\n\n'), confirm: false }, ctx));
-    if (c.safetyUnlockedBy) {
+    if (c.safetyUnlockedBy && !ctx.isAdmin()) {
+      card.append(h('div', { class: 'ed-locked' }, h('p', { class: 'ed-label' }, icon('lock'), ` Safety line — unlocked by ${c.safetyUnlockedBy}`), h('p', { class: 'ed-locked-text', text: c.safety || '' }), h('p', { class: 'ed-hint', text: 'Only an administrator can reword it.' })));
+      card.append(h('button', { type: 'button', class: 'ed-linkbtn', onclick: () => { const n = clone(ctx.get('scope.services')); delete n[i].safetyUnlockedBy; delete n[i].safety; ctx.set('scope.services', n, { structural: true }); } }, 'Restore the website safety line'));
+    } else if (c.safetyUnlockedBy) {
       card.append(renderField({ type: 'area', path: [...base, 'safety'], label: `Safety line — unlocked by ${c.safetyUnlockedBy}`, confirm: false }, ctx));
       card.append(h('button', { type: 'button', class: 'ed-linkbtn', onclick: () => { const n = clone(ctx.get('scope.services')); delete n[i].safetyUnlockedBy; delete n[i].safety; ctx.set('scope.services', n, { structural: true }); } }, 'Restore the website safety line'));
     } else {

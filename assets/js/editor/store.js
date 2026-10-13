@@ -46,7 +46,9 @@ export function serverSaver({ id, getCfg, version, onState, onConflict }) {
   const save = async (force = false) => {
     clearTimeout(timer);
     timer = null;
-    if (inflight) { await inflight; if (!dirty) return true; }
+    // One save at a time: two callers waiting on the same save must not both
+    // send the same version (the second would look like a colleague's conflict).
+    while (inflight) await inflight;
     if (!dirty || (blocked && !force)) return !dirty;
     const cfg = getCfg();
     const sentAt = Date.now();

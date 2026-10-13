@@ -68,6 +68,22 @@ answered, and say where the answer came from.
 - **Online acceptance is Phase 5.** Until then an issued proposal's acceptance form says to accept by email or phone. Attachments say "available on request" (Phase 4).
 - **Access**: anyone on an allowed domain (ACCOUNT_DOMAINS, default the website's domain) can ask from the sign-in page; administrators approve in People. Brand in Black accounts come from ACCOUNT_SUPERS and cannot be created or changed in the app. The staff list and roles are still to come from TEXC (C28).
 
+### Independent security review (13 Oct 2026)
+
+A read-only review of the Phase 3 server found nine confirmed issues; all are fixed and each now has a test in `check.mjs refusals`:
+
+1. Publishing with an unlocked safety line committed, then crashed before showing the passphrase (the audit call had no request). Fixed; the unlocked publish completes and is audited.
+2. Safety-line unlocks were administrator-only in the browser but not on the server. Now the server refuses them below administrator and stamps the administrator's own address.
+3. The frozen website data carried George's full competency and licence lists. Now only name, role, biography and the licence note.
+4. An editor could re-publish a withdrawn proposal and revive its old link. Now only an administrator can, and it gets a new link and passphrase.
+5. Sign-in code guessing was a rate, not a cap. Now five wrong guesses throw the code away, with a daily cap per address.
+6. Sign-in timing could hint which addresses have accounts. Every "email me a code" answer now takes the same minimum time.
+7. A Brand in Black row was stored as an administrator. It now carries no standing of its own; the super tier is computed every time.
+8. Access requests could be flooded. Capped system-wide per day.
+9. The editor could conflict with its own save. Saves are now strictly one at a time.
+
+Also: the vault's claim was corrected (drafts and published text are plaintext on the server; `docs/data-handling.md`), the private buckets are declared in `schema.sql`, the public demo fixture is stripped of editor notes, attachments are filtered by visibility in the projection, and rotation re-wraps keys in parallel.
+
 ## Phase 2 notes
 
 - **Drafts** (Phase 3: now on the server). Autosave runs 2 s after typing stops and never more than 20 s while changes wait; a colleague's newer save is never overwritten without a choice. Photographs are resized in the browser (EXIF and GPS dropped) and stored in the private bucket.

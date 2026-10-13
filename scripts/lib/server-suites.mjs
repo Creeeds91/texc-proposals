@@ -55,9 +55,12 @@ export async function closeServerSuites() {
 /** A tiny API client with its own session cookie. */
 function client(a) {
   let cookie = '';
+  // Each test client is its own caller, as separate people would be: the
+  // per-connection sign-in limits are counted by (hashed) address.
+  const ip = `203.0.113.${1 + Math.floor(Math.random() * 250)}`;
   return {
     async call(method, path, body, headers = {}) {
-      const r = await fetch(a.url + path, { method, redirect: 'manual', headers: { 'content-type': 'application/json', origin: a.url, cookie, ...headers }, body: body === undefined ? undefined : JSON.stringify(body) });
+      const r = await fetch(a.url + path, { method, redirect: 'manual', headers: { 'content-type': 'application/json', origin: a.url, cookie, 'x-forwarded-for': ip, ...headers }, body: body === undefined ? undefined : JSON.stringify(body) });
       const sc = r.headers.get('set-cookie');
       if (sc) cookie = sc.split(';')[0];
       const text = await r.text();
@@ -214,6 +217,58 @@ export async function suiteRefusals() {
   // A stale draft version is refused too: what is published is what the editor saw.
   const stale = await staff.call('POST', '/api/proposals', { action: 'publish', id: live.id, version: 1 });
   if (stale.status !== 409) fails.push(`publishing from a stale draft version answered ${stale.status}`);
+  // Review fixes, held: ------------------------------------------------------
+  const q = (sql) => psql(a.sb.conn, sql);
+  // (1) Publishing with an unlocked safety line completes, shows the passphrase, and is audited.
+  const unlocked = await demoProposal(staff, { publish: false });
+  let dr = (await staff.call('GET', `/api/drafts?id=${unlocked.id}`)).json;
+  const cfgU = JSON.parse(JSON.stringify(dr.config));
+  cfgU.scope.services[0].safetyUnlockedBy = 'someone-else@example.com';
+  cfgU.scope.services[0].safety = cfgU.scope.services[0].safety || 'Reworded by an administrator for this site.';
+  const putU = await staff.call('PUT', '/api/drafts', { id: unlocked.id, version: dr.version, config: cfgU });
+  dr = (await staff.call('GET', `/api/drafts?id=${unlocked.id}`)).json;
+  if (putU.status !== 200 || dr.config.scope.services[0].safetyUnlockedBy !== a.CHECK_EMAIL) fails.push(`an unlock was not stamped by the server with the administrator's own address (${putU.status}, ${dr.config.scope.services[0].safetyUnlockedBy})`);
+  const pubU = await staff.call('POST', '/api/proposals', { action: 'publish', id: unlocked.id, version: dr.version });
+  if (pubU.status !== 200 || !pubU.json.passphrase) fails.push(`publishing with an unlocked safety line answered ${pubU.status} ${pubU.text.slice(0, 120)}`);
+  if (q(`select count(*) from public.texc_staff_audit where proposal_id = '${unlocked.id}' and action in ('safety_unlocked', 'published_unlocked_safety')`) !== '2') fails.push('the unlock and the unlocked publish were not both audited');
+  // (3) The frozen people data carries no competency or licence lists.
+  const text = q(`select published_text from public.texc_proposal_revisions where proposal_id = '${live.id}' order by rev_index limit 1`);
+  const tplPeople = JSON.parse(text).tpl.people || [];
+  if (!tplPeople.length || tplPeople.some((x) => 'competencies' in x || 'licences' in x)) fails.push('the published text carries the website\'s competency or licence lists');
+  // (2, 4) An editor: cannot unlock a safety line, cannot bring back a withdrawn proposal.
+  const editorEmail = 'editor.check@example.com';
+  await anon.call('POST', '/api/auth?action=code', { email: editorEmail });
+  await staff.call('POST', '/api/people', { email: editorEmail, status: 'active', role: 'editor' });
+  const editor = client(a);
+  await editor.signIn(editorEmail);
+  const ed = await demoProposal(editor, { publish: false });
+  const edDraft = (await editor.call('GET', `/api/drafts?id=${ed.id}`)).json;
+  const cfgE = JSON.parse(JSON.stringify(edDraft.config));
+  cfgE.scope.services[0].safetyUnlockedBy = a.CHECK_EMAIL;
+  cfgE.scope.services[0].safety = 'Softer wording.';
+  const putE = await editor.call('PUT', '/api/drafts', { id: ed.id, version: edDraft.version, config: cfgE });
+  if (putE.status !== 403) fails.push(`an editor unlocking a safety line answered ${putE.status}`);
+  const wDraft = (await editor.call('GET', `/api/drafts?id=${withdrawn.id}`)).json;
+  const reE = await editor.call('POST', '/api/proposals', { action: 'publish', id: withdrawn.id, version: wDraft.version });
+  if (reE.status !== 403) fails.push(`an editor re-publishing a withdrawn proposal answered ${reE.status}`);
+  const reA = await staff.call('POST', '/api/proposals', { action: 'publish', id: withdrawn.id, version: wDraft.version });
+  const oldLink = await anon.call('GET', `/api/proposal?slug=${withdrawn.slug}&t=${withdrawn.t}`);
+  if (reA.status !== 200 || !reA.json.passphrase || reA.json.url.includes(withdrawn.t) || oldLink.status !== 410) fails.push(`re-issuing a withdrawn proposal did not give a new link and passphrase with the old link dead (${reA.status}, old ${oldLink.status})`);
+  // (5) Six wrong codes and the real one no longer works.
+  const guessEmail = 'guess.check@example.com';
+  await anon.call('POST', '/api/auth?action=code', { email: guessEmail });
+  await staff.call('POST', '/api/people', { email: guessEmail, status: 'active', role: 'viewer' });
+  await anon.call('POST', '/api/auth?action=code', { email: guessEmail });
+  const realCode = a.codeFor(a.outbox(), guessEmail);
+  const guesser = client(a);
+  for (let i = 0; i < 6; i += 1) await guesser.call('POST', '/api/auth?action=verify', { email: guessEmail, code: realCode === '000000' ? '111111' : '000000' });
+  const late = await guesser.call('POST', '/api/auth?action=verify', { email: guessEmail, code: realCode });
+  if (late.status === 200) fails.push('after six wrong guesses the real code still signed in');
+  // (7) A Brand in Black account's stored row has no standing of its own.
+  const row = q(`select role || '/' || status from public.texc_users where email = '${a.CHECK_EMAIL}'`);
+  if (row !== 'viewer/suspended') fails.push(`a super's stored row is ${row} (it must carry no standing of its own)`);
+  // ---------------------------------------------------------------------------
+
   // A viewer cannot edit or publish.
   const viewerEmail = 'viewer.check@example.com';
   await anon.call('POST', '/api/auth?action=code', { email: viewerEmail });
@@ -226,6 +281,8 @@ export async function suiteRefusals() {
     `${cases.length} kinds of bad link (wrong token, withdrawn, expired, rotated, never issued…) get byte-identical 410s from /api/proposal and /api/media`,
     'view and event answer 204 with no body, whatever is sent; staff endpoints answer 401 without a session',
     'publishing a CONFIRM is refused (422) with nothing written; a stale draft version is refused (409)',
+    'safety unlocks: editors refused, administrators stamped by the server, the unlocked publish completes and is audited',
+    'a withdrawn proposal comes back only through an administrator, behind a new link; six wrong codes kill the real one',
     'cross-site POST refused with a valid session; a viewer cannot open proposals for editing',
   ] };
 }

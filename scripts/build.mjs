@@ -206,7 +206,12 @@ export function writePublic({ demo = process.env.DEMO_PUBLIC === '1' } = {}) {
   cpSync(resolve(ROOT, 'robots.txt'), resolve(out, 'robots.txt'));
   if (demo) {
     cpSync(resolve(ROOT, 'views/demo.html'), resolve(out, 'views/demo.html'));
-    cpSync(resolve(ROOT, 'fixtures'), resolve(out, 'fixtures'), { recursive: true });
+    // The public copy of the demo carries nothing but what its page shows:
+    // no editor bookkeeping (whose notes name the real job it was drawn from).
+    const fixture = json('fixtures/demo-proposal.json');
+    for (const k of ['presetsUsed', 'acks', '_about']) delete fixture[k];
+    mkdirSync(resolve(out, 'fixtures'), { recursive: true });
+    writeFileSync(resolve(out, 'fixtures/demo-proposal.json'), JSON.stringify(fixture));
   }
   return out;
 }
