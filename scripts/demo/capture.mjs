@@ -13,18 +13,22 @@
  *   demo-out/demo-proposal-A4.pdf    the printed proposal
  *   demo-out/editor/*.png            the editor, staff side: desktop and phone   (local stack)
  *   demo-out/phase3/*.png            sign-in, publishing, the gate, revisions, People   (local stack)
+ *   demo-out/phase4/*.png            documents: attaching, the check's verdicts, release,
+ *                                    the client's documents and viewer            (local stack)
  *
  *   node scripts/demo/capture.mjs              everything
  *   node scripts/demo/capture.mjs --editor     the editor captures only
  *   node scripts/demo/capture.mjs --phase3     the Phase 3 captures only
+ *   node scripts/demo/capture.mjs --phase4     the Phase 4 captures only
  *
  * Section stills hide the fixed furniture (top bar, rail, back-to-top) so a
  * sticky bar is never stitched into the middle of a section; the arrival shots
  * keep it. Look at every capture before sending it.
  * Exit 2 when no browser could be started.
  */
-import { mkdirSync, renameSync, rmSync, readdirSync } from 'node:fs';
+import { mkdirSync, renameSync, rmSync, readdirSync, readFileSync, existsSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { startServer } from './serve.mjs';
 import { loadPlaywright } from '../lib/browser.mjs';
@@ -37,7 +41,11 @@ if (!pw) { console.error('NOT RUN — Playwright not found'); process.exit(2); }
 const PORT = 4321;
 const server = await startServer({ port: PORT });
 const URL = `http://127.0.0.1:${PORT}/demo`;
-const browser = await pw.chromium.launch();
+// Date fields follow the browser's own language, which follows the environment.
+const browser = await pw.chromium.launch({ args: ['--lang=en-AU'], env: { ...process.env, LANG: 'en_AU.UTF-8', LANGUAGE: 'en_AU', LC_ALL: 'en_AU.UTF-8' } });
+
+// As TEXC's staff and clients meet it: an Australian locale and Hobart time.
+const AU = { locale: 'en-AU', timezoneId: 'Australia/Hobart' };
 
 const hideFurniture = (page, hide) => page.evaluate((h) => {
   for (const id of ['topbar', 'index', 'flt', 'pbar']) {
@@ -60,7 +68,7 @@ async function stills(width, height, scale) {
   const dir = resolve(OUT, String(width));
   rmSync(dir, { recursive: true, force: true });
   mkdirSync(dir, { recursive: true });
-  const page = await browser.newPage({ viewport: { width, height }, deviceScaleFactor: scale, reducedMotion: 'reduce' });
+  const page = await browser.newPage({ ...AU, viewport: { width, height }, deviceScaleFactor: scale, reducedMotion: 'reduce' });
   await ready(page);
   await page.screenshot({ path: resolve(dir, '00-arrival.png') });
 
@@ -96,7 +104,7 @@ async function stills(width, height, scale) {
 async function video(width, height, scale) {
   const vdir = resolve(OUT, 'video-tmp');
   rmSync(vdir, { recursive: true, force: true });
-  const ctx = await browser.newContext({ viewport: { width, height }, deviceScaleFactor: scale, recordVideo: { dir: vdir, size: { width, height } } });
+  const ctx = await browser.newContext({ ...AU, viewport: { width, height }, deviceScaleFactor: scale, recordVideo: { dir: vdir, size: { width, height } } });
   const page = await ctx.newPage();
   await ready(page);
   await page.waitForTimeout(1200);
@@ -133,7 +141,7 @@ async function localApp() {
 let staffState = null;
 async function signedIn(width, height, scale, { shoot } = {}) {
   const a = await localApp();
-  const ctx = await browser.newContext({ viewport: { width, height }, deviceScaleFactor: scale, reducedMotion: 'reduce', ...(staffState && !shoot ? { storageState: staffState } : {}) });
+  const ctx = await browser.newContext({ ...AU, viewport: { width, height }, deviceScaleFactor: scale, reducedMotion: 'reduce', ...(staffState && !shoot ? { storageState: staffState } : {}) });
   const page = await ctx.newPage();
   page.on('dialog', (d) => d.accept());
   if (staffState && !shoot) {
@@ -170,17 +178,17 @@ async function openDemo(page, a) {
 }
 
 /** Open one panel, put `inner` (or the panel) at the top of the drawer, and the section at the top of the page. */
-async function focusPanel(page, sec, { inner, preview = sec, previewOffset = 0 } = {}) {
-  await page.evaluate(({ sec, inner, preview, previewOffset }) => {
+async function focusPanel(page, sec, { inner, preview = sec, previewOffset = 0, drawerOffset = 0 } = {}) {
+  await page.evaluate(({ sec, inner, preview, previewOffset, drawerOffset }) => {
     const ed = window.__editor;
     ed.state.open = new Set([sec]);
     ed.ctx.refresh();
     const host = document.getElementById('ed-panels');
     const target = document.querySelector(`.ed-panel[data-sec="${sec}"] ${inner || ''}`.trim());
-    host.scrollTop += target.getBoundingClientRect().top - host.getBoundingClientRect().top - 8;
+    host.scrollTop += target.getBoundingClientRect().top - host.getBoundingClientRect().top - 8 - drawerOffset;
     const s = document.getElementById(preview);
     if (s) window.scrollTo(0, s.getBoundingClientRect().top + window.scrollY - 76 + previewOffset);
-  }, { sec, inner: inner || '', preview, previewOffset });
+  }, { sec, inner: inner || '', preview, previewOffset, drawerOffset });
   await page.evaluate(() => window.whenImagesReady(document, 8000));
   await page.waitForTimeout(250);
 }
@@ -259,6 +267,7 @@ async function phase3Stills() {
   await page.waitForSelector('dialog .ed-rows-tools');
   await shot(page, '1440-03-proposals-empty.png');
   const id = await openDemo(page, a);
+  await attachTestFiles(page);
   await page.click('#ed-check');
   await page.waitForSelector('dialog .ed-verdict');
   for (const box of await page.$$('dialog .ed-ack input')) await box.check();
@@ -276,7 +285,7 @@ async function phase3Stills() {
   await shot(page, '1440-06-editor-issued.png');
 
   const client = async (width, height, scale, tag) => {
-    const c = await browser.newContext({ viewport: { width, height }, deviceScaleFactor: scale, reducedMotion: 'reduce' });
+    const c = await browser.newContext({ ...AU, viewport: { width, height }, deviceScaleFactor: scale, reducedMotion: 'reduce' });
     const p = await c.newPage();
     await p.goto(link);
     await p.waitForSelector('#gate-form');
@@ -347,8 +356,121 @@ async function phase3Stills() {
   return readdirSync(dir).length;
 }
 
+/** Each document the client can open gets a plain test file, through the editor (Phase 3 captures need a publishable proposal). */
+async function attachTestFiles(page) {
+  const { attachInEditor, testPdf } = await import('../lib/server-suites.mjs');
+  const cards = await page.evaluate(() => window.__editor.state.cfg.attachments || []);
+  await page.evaluate(() => { window.__editor.state.open.add('attachments'); window.__editor.ctx.refresh(); });
+  for (const [i, card] of cards.entries()) if (card.visibility === 'client') await attachInEditor(page, i, `${card.id}.pdf`, testPdf(card.title));
+}
+
+/**
+ * Phase 4, staff side first: documents attached and checked — one of the
+ * suite's own forms refused for its scripts and replaced by a flattened copy,
+ * a client's scan that could not be verified released with a reason — then
+ * the checklist, a preview, and the client's documents and viewer.
+ */
+async function phase4Stills() {
+  const dir = resolve(OUT, 'phase4');
+  rmSync(dir, { recursive: true, force: true });
+  mkdirSync(dir, { recursive: true });
+  const shot = (page, name) => page.screenshot({ path: resolve(dir, name) });
+  const { attachInEditor } = await import('../lib/server-suites.mjs');
+  const { FIXTURES } = await import('../lib/pdf-fixtures.mjs');
+
+  // Two of the suite's own forms (names and codes from the register), as issued and flattened.
+  const register = JSON.parse(readFileSync(resolve(ROOT, 'content/register.json'), 'utf8')).documents;
+  const [form, report] = [register[0], register.find((d) => d.id.endsWith('10'))];
+  const suiteDir = resolve(ROOT, '../texc/documents/exemplars/pdf');
+  const fileOf = (doc) => (existsSync(suiteDir) ? readdirSync(suiteDir).find((n) => n.startsWith(`${doc.id}_`)) : null);
+  if (!fileOf(form) || !fileOf(report)) throw new Error('the Phase 4 captures need the sibling ../texc checkout (the suite PDFs)');
+  const flatDir = resolve(OUT, 'attachments-check');
+  mkdirSync(flatDir, { recursive: true });
+  const flatPath = resolve(flatDir, `${form.id}-capture-flattened.pdf`);
+  if (spawnSync('pdftocairo', ['-pdf', resolve(suiteDir, fileOf(form)), flatPath]).status !== 0) throw new Error('pdftocairo is needed to flatten the suite form');
+  const cards = [
+    { id: 'a1', title: form.title, category: 'risk', docCode: form.code, visibility: 'client' },
+    { id: 'a2', title: report.title, category: 'risk', docCode: report.code, visibility: 'client' },
+    { id: 'a3', title: 'Stage 2 corridor survey, scanned (client supplied)', category: 'drawings', docRev: 'C', docDate: '2026-09-22', visibility: 'client' },
+    { id: 'a4', title: 'Certificate of currency', category: 'certificates', visibility: 'on-request' },
+  ];
+
+  let { ctx, page, a } = await signedIn(1440, 900, 1);
+  const id = await openDemo(page, a);
+  await page.evaluate((list) => window.__editor.ctx.set('attachments', list, { structural: true }), cards);
+  await page.evaluate(() => { window.__editor.state.open.add('attachments'); window.__editor.ctx.refresh(); });
+  await attachInEditor(page, 0, fileOf(form), readFileSync(resolve(suiteDir, fileOf(form))));
+  await attachInEditor(page, 1, fileOf(report), readFileSync(resolve(suiteDir, fileOf(report))));
+  await attachInEditor(page, 2, 'stage-2-survey-scan.pdf', FIXTURES['a stream in a filter the check cannot read (LZW)'].bytes());
+  // Each card's verdict box whole, with the fields above it for context.
+  await focusPanel(page, 'attachments', { inner: '[data-path="attachments.0.file"]', drawerOffset: 330 });
+  await shot(page, '1440-01-documents-refused.png');
+  await focusPanel(page, 'attachments', { inner: '[data-path="attachments.2.file"]', drawerOffset: 330 });
+  await shot(page, '1440-02-documents-cannot-verify.png');
+  await page.click('#ed-check');
+  await page.waitForSelector('dialog .ed-verdict');
+  await page.waitForTimeout(200);
+  await shot(page, '1440-03-checklist-blocked.png');
+  await page.click('dialog .ed-dialog-head button');
+
+  await attachInEditor(page, 0, fileOf(form).replace(/\.pdf$/, '_flattened.pdf'), readFileSync(flatPath));
+  page.removeAllListeners('dialog');
+  page.on('dialog', (d) => d.accept(d.type() === 'prompt' ? 'Scanned survey from the client, opened and read through by hand before sending.' : undefined));
+  await page.click('[data-path="attachments.2.file"] button:has-text("Release")');
+  await page.waitForFunction(() => document.querySelector('[data-path="attachments.2.file"]')?.dataset.state === 'override');
+  await focusPanel(page, 'attachments', { inner: '[data-path="attachments"] .ed-row' });
+  await shot(page, '1440-04-documents-ready.png');
+  await focusPanel(page, 'attachments', { inner: '[data-path="attachments"] .ed-row:has([data-path="attachments.2.file"])' });
+  await shot(page, '1440-05-documents-released.png');
+  await page.click('[data-path="attachments.0.file"] button:has-text("Preview")');
+  await page.waitForSelector('dialog.viewer figure[data-drawn]', { timeout: 30000 });
+  await page.waitForTimeout(400);
+  await shot(page, '1440-06-preview.png');
+  await page.keyboard.press('Escape');
+
+  await page.click('#ed-check');
+  await page.waitForSelector('dialog .ed-verdict');
+  for (const box of await page.$$('dialog .ed-ack input')) await box.check();
+  await page.click('#ck-publish');
+  await page.waitForSelector('dialog h2:has-text("Published")', { timeout: 30000 });
+  const [link, pass] = await page.$$eval('dialog .ed-secret code', (c) => c.map((x) => x.textContent));
+  await page.click('dialog .ed-dialog-head button');
+  await ctx.close();
+
+  // The editor on a phone: the Documents panel.
+  ({ ctx, page, a } = await signedIn(390, 844, 2));
+  await page.goto(`${a.url}/editor/${id}`);
+  await page.waitForFunction(() => window.__editor && window.__editor.state.filesLoaded, null, { timeout: 15000 });
+  await focusPanel(page, 'attachments', { inner: '[data-path="attachments.0.file"]', drawerOffset: 420 });
+  await shot(page, '390-10-editor-documents.png');
+  await ctx.close();
+
+  for (const [width, height, scale, tag] of [[1440, 900, 1, '1440'], [390, 844, 2, '390']]) {
+    const c = await browser.newContext({ ...AU, viewport: { width, height }, deviceScaleFactor: scale, reducedMotion: 'reduce' });
+    const p = await c.newPage();
+    await p.goto(link);
+    await p.fill('#gate-pass', pass);
+    await p.click('#gate-go');
+    await p.waitForFunction(() => document.documentElement.classList.contains('ready'), null, { timeout: 15000 });
+    await p.evaluate(() => { document.documentElement.style.scrollBehavior = 'auto'; const s = document.getElementById('attachments'); window.scrollTo(0, s.getBoundingClientRect().top + window.scrollY - 64); });
+    await p.waitForTimeout(700);
+    await p.screenshot({ path: resolve(dir, `${tag}-07-client-documents.png`) });
+    await p.click('#attachments [data-attachment="a1"][data-action="view"]');
+    await p.waitForSelector('dialog.viewer figure[data-drawn]', { timeout: 30000 });
+    await p.waitForTimeout(500);
+    await p.screenshot({ path: resolve(dir, `${tag}-08-client-viewer.png`) });
+    if (tag === '390') {
+      await p.evaluate(() => { const b = document.querySelector('dialog.viewer .viewer-body'); b.scrollTop = b.scrollHeight / 2; });
+      await p.waitForTimeout(800);
+      await p.screenshot({ path: resolve(dir, `${tag}-09-client-viewer-scrolled.png`) });
+    }
+    await c.close();
+  }
+  return readdirSync(dir).length;
+}
+
 async function pdf() {
-  const page = await browser.newPage({ viewport: { width: 1200, height: 900 }, reducedMotion: 'reduce' });
+  const page = await browser.newPage({ ...AU, viewport: { width: 1200, height: 900 }, reducedMotion: 'reduce' });
   await ready(page);
   await page.emulateMedia({ media: 'print' });
   await page.evaluate(() => window.dispatchEvent(new Event('beforeprint')));
@@ -362,6 +484,8 @@ try {
     console.log(`demo-out/editor/: ${await editorStills()} editor captures`);
   } else if (process.argv.includes('--phase3')) {
     console.log(`demo-out/phase3/: ${await phase3Stills()} captures`);
+  } else if (process.argv.includes('--phase4')) {
+    console.log(`demo-out/phase4/: ${await phase4Stills()} captures`);
   } else {
     const desk = await stills(1440, 900, 1);
     const phone = await stills(390, 844, 2);
@@ -370,7 +494,8 @@ try {
     await pdf();
     const e = await editorStills();
     const p3 = await phase3Stills();
-    console.log(`demo-out/: ${desk} sections at 1440, ${phone} at 390, arrival shots, two scroll videos, A4 PDF, ${e} editor and ${p3} Phase 3 captures`);
+    const p4 = await phase4Stills();
+    console.log(`demo-out/: ${desk} sections at 1440, ${phone} at 390, arrival shots, two scroll videos, A4 PDF, ${e} editor, ${p3} Phase 3 and ${p4} Phase 4 captures`);
   }
 } finally {
   await browser.close();

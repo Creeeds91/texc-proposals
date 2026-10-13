@@ -662,3 +662,89 @@ real PostgREST (Docker) behind the real `api/*` handlers, with a file-backed
 stand-in for Storage and a local outbox for email. Nothing touches a hosted
 service. `node scripts/schema-standup-check.mjs` proves the schema on a fresh
 database.
+
+---
+
+## 15. Phase 4 as built (13 Oct 2026)
+
+Where the build refines §5. Malware scanning is option A (Q6): staff-only
+uploads plus the structural check. Option B (ClamAV in Sydney) is not built.
+
+**A file goes up in three steps, straight to the bucket.** A PDF can be 25 MB
+and a Vercel function accepts 4.5 MB, so the bytes never pass through one:
+
+1. `begin` — the editor hashes the file (SHA-256) and names it; the server
+   fixes the path `proposals/<id>/attachments/<sha256[:16]>-<name>.pdf` and
+   answers a one-off upload URL (or the existing record, if this proposal
+   already has that exact file).
+2. The browser PUTs the bytes to that URL. The bucket enforces 25 MB and
+   `application/pdf` itself; paths are never overwritten.
+3. `verify` — the server reads the stored bytes back (stopping past 25 MB),
+   checks they hash to what was named, runs `lib/pdf-inspect.js` and records
+   the result in `texc_attachments`.
+
+**The check.** Refused anywhere in the file, after decoding Flate, ASCII85 and
+ASCIIHex (chained) and `#xx` name escapes: `/JavaScript`, `/JS`, `/Launch`,
+`/EmbeddedFile(s)`, `/RichMedia`, `/XFA`, `/SubmitForm`, `/ImportData`. A bare
+`/OpenAction` passes (it just sets the zoom). Two kinds of "no":
+
+| Finding | Kept? | An administrator may release it |
+|---|---|---|
+| Not a PDF, over 25 MB, encrypted, or one stream expanding past 96 MB (a "zip bomb") | No — deleted at once, no record | Never |
+| Active content (scripts, launch actions, embedded files…) | Yes, with the reasons | Yes, with a reason (audited) |
+| Could not be verified: a filter the check cannot read (LZW, for example), no pages found, or streams adding up past 256 MB (a large vector drawing can) | Yes, with the reasons | Yes, with a reason (audited) |
+
+The size rule matters: a genuine drawing must never be refused outright for
+its size, so only a single stream expanding past 96 MB is a bomb; a file that
+merely adds up is "could not be verified". Streams are scanned one at a time
+and let go, so memory stays bounded by one stream.
+
+**TEXC's own suite PDFs.** Eight of the twelve carry Acrobat calculation
+scripts and are refused as issued — the very documents a proposal offers.
+`check.mjs attachments` confirms the verdict for all twelve against a second
+parser (pypdf), and that a flattened copy (printed to PDF; `pdftocairo -pdf`)
+of every one passes with the right page count. Staff attach the flattened
+copy; the card says so.
+
+**Publishing binds the exact files.** A client-visible card must point at a
+file that passed or was released — the shared checklist blocks otherwise, in
+the editor and on the server. `toPublished` writes the card's measured pages
+and size into the client's copy (never the file id or path), and the revision
+records `attachments_snapshot` `[{ card, file, path, sha256, bytes, pages,
+title, name, released }]`. A later replacement cannot reach an issued
+revision, and the change list names a replaced file even when its card reads
+the same.
+
+**The client reaches a file through the revision, never the request.**
+`POST /api/attachment { slug, t, vt, rev, id }` checks the link, the view token
+(the caller decrypted this revision), and that `id` is a card in that
+revision's snapshot; then it answers a 60-second signed URL and records
+`attachment_opened` or `attachment_downloaded`. Every refusal is the uniform
+410. "On request" cards have no file access at all.
+
+**The viewer** (`assets/js/pdf-viewer.js`) is pdf.js 5.4.624, legacy build,
+self-hosted in `assets/vendor/pdfjs/` (integrity checked against npm; every
+file in `SHA256SUMS`, held by `check.mjs attachments`). It loads on first use,
+fetches the whole file once from the 60-second link and renders from memory,
+so a slow connection never outlives the link. `isEvalSupported: false`; the
+PDF's own scripts never run. Pages draw as they near the screen and are let go
+when far away, so a long document does not exhaust a phone. Open in new tab
+(the phone's own zoomable viewer) and Download are always offered — the
+accessible route, and the route where pdf.js cannot run. A download is fetched
+and saved under `<reference> <title>.pdf` without leaving the page.
+
+**CSP changes.** Both pages: `connect-src 'self' https://*.supabase.co` (the
+viewer's fetch; the editor's direct upload) and `worker-src 'self'`.
+`/assets/vendor/` is served with its own narrower policy
+(`lib/csp.js` `WORKER_CSP`: own scripts, WebAssembly decoders, own-origin
+fetches only) and a year's immutable caching. The two pdf.js modules are
+saved as `.js`, not `.mjs`, so any host serves them as JavaScript.
+
+**Staff preview** opens the same viewer through `api/attachments.js`
+(`url`, 60 seconds, editor and above), including for a refused file, so it
+can be looked at before an administrator decides.
+
+**Not built:** thumbnails (`thumb_path` is reserved), "generate from suite"
+(`source`, `source_ref` reserved), zoom controls in the viewer (Open in new
+tab covers it), archiving a file (a removed card leaves the file on the
+proposal, because an issued revision may still point at it).

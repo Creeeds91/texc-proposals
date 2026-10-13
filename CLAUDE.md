@@ -139,6 +139,26 @@ added later is appended with `alter table … add column`, never tidied into the
 - Endpoints never read `content/` or `templates/` at run time; they import the
   generated `lib/template-data.js`, `lib/editor-html.js`, `lib/signin-html.js`.
 
+## Attachments (Phase 4)
+
+`docs/architecture.md` §15 is the design. What must hold:
+
+- **Only a checked file reaches a client.** A client-visible card needs a file
+  whose verdict is `clean`, or `override` (an administrator's audited release
+  with a reason). The checklist (`assets/js/checks.js`), `lib/projection.js`
+  and the revision's `attachments_snapshot` all enforce it. Never weaken
+  `lib/pdf-inspect.js` to let a file through: attach a flattened copy, or
+  release it. TEXC's suite PDFs carry scripts and are refused as issued.
+- **The client's endpoint reads the file from the revision's snapshot,
+  never from the request**, and refuses with the uniform 410.
+- **Nothing that can never be served is kept**: not a PDF, encrypted, a "zip
+  bomb". A genuine large drawing is "cannot verify", never refused outright.
+- **pdf.js is vendored, never edited** (`assets/vendor/pdfjs/README.md`). An
+  upgrade is a new version folder, a new `SHA256SUMS`, one path in
+  `assets/js/pdf-viewer.js`. `check.mjs attachments` fails on any drift.
+- After any change here run `check.mjs attachments refusals editor flow` and
+  `node scripts/demo/capture.mjs --phase4`, and look at the captures.
+
 ## Generated files
 
 `views/*.html`, `lib/editor-html.js`, `lib/signin-html.js`,

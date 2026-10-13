@@ -10,9 +10,10 @@ change it in the same commit as anything it describes.
 | Passphrases | `texc_proposals.passphrase_enc`, sealed with `VAULT_KEY` (never in the database) | The server; an administrator by audited read-back |
 | Link tokens | `texc_proposals.access_token`, plaintext | The server; staff (to copy the link) |
 | Uploaded photographs | Storage bucket `texc-media`, private | One-hour signed links: staff in the editor, and a client for the photographs their revision names |
+| Attached documents (PDFs) | Storage bucket `texc-attachments`, private; the facts and the check's findings in `texc_attachments` (name, SHA-256, size, pages, verdict, who uploaded, who released it and why) | 60-second signed links: staff (editor and above) for any file on a proposal; a client only for a file their decrypted revision offers as "the client can open it". A refused file that can never be served is deleted at once |
 | Staff accounts | `texc_users` (email, name, role, status) | The server; administrators in People |
 | Sign-in codes and sessions | `texc_login_tokens`, `texc_user_sessions`: SHA-256 hashes only | Nobody can recover a code or a session from them |
-| What clients did (opened, ticked an option, printed) | `texc_events`, `texc_proposal_views`: device family, region, a keyed hash of the IP — never the address | The server; staff (the archive, Phase 6) |
+| What clients did (opened, ticked an option, printed, opened or downloaded a document) | `texc_events`, `texc_proposal_views`: device family, region, a keyed hash of the IP — never the address | The server; staff (the archive, Phase 6) |
 | Who on the staff side did something sensitive | `texc_staff_audit`, append-only | The server; Brand in Black |
 
 The database has row-level security on every table and no policies, so the
@@ -23,5 +24,9 @@ but no passphrase, no sign-in code and no session.
 Region: Supabase in Sydney (`ap-southeast-2`); Vercel functions pinned to
 `syd1`. Email goes through SMTP2GO.
 
+A document's bytes are not encrypted with the proposal's passphrase: they sit
+in the private bucket like the photographs, and only a short-lived signed link
+reaches them. Whoever holds such a link in its 60 seconds can fetch the file.
+
 Still to settle: the privacy notice for proposals (C31), and how long drafts,
-views and events are kept.
+views, events and attached files are kept.

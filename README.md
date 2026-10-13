@@ -15,8 +15,8 @@ Built by Brand in Black. Plan: `docs/architecture.md`. What still needs TEXC:
 | 0 | Plan | Approved 13 Oct 2026 |
 | 1 | Static client page from a demo config | Built 13 Oct 2026 |
 | 2 | Editor | Built 13 Oct 2026 |
-| 3 | Database, accounts, publishing, gate, revisions | **This build** |
-| 4 | PDF attachments | — |
+| 3 | Database, accounts, publishing, gate, revisions | Built 13 Oct 2026 |
+| 4 | PDF attachments: upload, check, release, viewer, download | **This build** |
 | 5 | Online acceptance | — |
 | 6 | Archive and dashboard | — |
 | 7 | Hardening and handover | — |
@@ -31,7 +31,7 @@ node scripts/demo/local-app.mjs    # the whole app on a fresh local database: ht
 node scripts/demo/serve.mjs        # just the client demo page, with production's headers
 node scripts/check.mjs             # all checks
 node scripts/schema-standup-check.mjs   # prove supabase/schema.sql on a fresh database
-node scripts/demo/capture.mjs      # screenshots, scroll videos and A4 PDF into demo-out/
+node scripts/demo/capture.mjs      # screenshots, scroll videos and A4 PDF into demo-out/ (--editor, --phase3, --phase4 for one set)
 ```
 
 The local app needs Postgres 16 and Docker (the cloud container has both). It
@@ -47,8 +47,9 @@ database every time. Sign in as `studio@example.com`; the "emailed" code is at
    private buckets `texc-media`, `texc-attachments`, `texc-acceptances`.
 2. A Vercel project on this repository, with the variables in `.env.example`.
 3. On the first preview deployment, check that `/lib/editor-html.js` and
-   `/content/library.seed.json` answer 404 (open item D1), then narrow
-   `img-src` in `lib/csp.js` and `vercel.json` to the project's own origin.
+   `/content/library.seed.json` answer 404 (open item D1); attach, view and
+   download one document with the console open (D4, D5); then narrow the
+   storage origin in `lib/csp.js` and `vercel.json` to the project's own.
 
 ## The editor
 
@@ -74,6 +75,14 @@ will see it.
   the next revision and shows the client link and, the first time only, the
   passphrase. Send them separately: the link by email, the passphrase by phone
   or text message.
+- **Documents**: each card the client can open needs a PDF (up to 25 MB).
+  Attach it on the card; it goes straight to private storage and is checked
+  before it can be sent. Anything that can run — scripts, launch actions,
+  embedded files — is refused, with the reason on the card. TEXC's own suite
+  PDFs carry calculation scripts, so attach a flattened copy (open it and print
+  it to PDF). An administrator can release a file the check refused or could
+  not verify, with a reason that is recorded. Preview shows it as the client
+  will.
 - **Drafts save to the server** every few seconds. If a colleague saved first,
   the editor asks whether to load theirs or keep yours; nothing is overwritten
   silently. Unsaved changes are also kept in the browser until the server has them.
@@ -86,6 +95,10 @@ revision appears behind the same link; earlier ones stay readable, marked
 superseded. A withdrawn, expired or rotated link shows "This link is no longer
 active", identically for every reason.
 
+Documents open in a viewer on the page (View), in a new tab, or download under
+the proposal's reference (Download). Each is a 60-second link to a file the
+client's own revision offers, and each open and download is recorded.
+
 The content sync and the token-drift check read a sibling checkout of the
 website:
 
@@ -95,7 +108,10 @@ node scripts/texc-content-sync.mjs
 ```
 
 Browser checks use Playwright if it is available (the cloud container ships
-it); without it they report NOT CHECKED rather than passing.
+it); without it they report NOT CHECKED rather than passing. The attachments
+check also reads TEXC's suite PDFs from that sibling checkout, with poppler
+(`pdfinfo`, `pdftocairo`) and Python's pypdf as the second opinion; without
+them that part reports NOT CHECKED.
 
 ## Layout
 
@@ -108,6 +124,8 @@ assets/js/checks.js       the pre-publish checklist, shared by editor and server
 assets/js/sensitive.js    likely-sensitive text (coordinates, magazines, quantities, routes)
 assets/js/schema.js       sections, document types, status labels
 assets/js/gate.js         the client's passphrase gate; envelope-client.js decrypts
+assets/js/pdf-viewer.js   the document viewer (pdf.js, loaded on first use)
+assets/vendor/pdfjs/      pdf.js 5.4.624, self-hosted, checksummed — never edit
 assets/js/signin.js       the staff sign-in page
 assets/js/editor/         the editor drawer: panels, fields, photos, autosave, checklist
 assets/css/editor.css     the drawer's styles (editor page only)
@@ -120,6 +138,8 @@ lib/accounts.js           sign-in codes, sessions, roles
 lib/envelope.js           encryption at publish; vault.js seals passphrases at rest
 lib/projection.js         what a client receives, by allowlist
 lib/proposals.js          publish, rotate, withdraw, read back
+lib/pdf-inspect.js        the structural PDF check
+lib/attachments.js        a file's three steps up: begin, upload, verify
 lib/*-html.js, lib/template-data.js, lib/demo-fixture.js   generated by the build
 api/                      the endpoints (staff and client)
 supabase/schema.sql       the database: tables, triggers, functions, lock-down

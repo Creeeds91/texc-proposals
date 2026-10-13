@@ -57,7 +57,19 @@ answered, and say where the answer came from.
 | D2 | Supabase project (Sydney, paid plan), Vercel project, and the variables in `.env.example` — VAULT_KEY kept offline as well | Needed before the first deployment. Approval to create paid services is Jesse's |
 | D3 | `img-src` allows `https://*.supabase.co` until the project exists | Narrow to the project's own origin in `lib/csp.js` and `vercel.json` at first deployment |
 | D1 | Only deliberate static files may be public. `lib/editor-html.js` carries the editor and its library (Chalmers presets, prototype rates); `content/` and `fixtures/` must not be served either. Whether Vercel serves `lib/` from the repo root was not confirmed from its docs | Built: Vercel serves only `public/` (an explicit list written by the build). Still to prove on the first preview deployment: `/lib/editor-html.js` and `/content/library.seed.json` return 404 |
+| D4 | Hosted Supabase Storage, from a browser: a PUT to a signed upload URL (raw body, `Content-Type: application/pdf`, no key), a CORS fetch of a signed download URL, and `&download=<name>` naming the file. All three hold against the local stand-in, which mimics the documented behaviour | Prove on the first preview deployment: attach, view and download one document |
+| D5 | Vercel serves `/assets/vendor/` with `WORKER_CSP` and the pdf.js worker runs under it (if a browser applies the page's policy to the worker instead, pdf.js falls back to plain scripts for JPEG 2000 and colour) | Prove on the first preview deployment: open a document, no CSP errors in the console |
+| Q6 | Malware scanning | Option A built (staff-only uploads plus the structural check). Option B (ClamAV in Sydney) only if clients ever upload |
 | Q4–Q15 | See `docs/architecture.md` §10. Recommendations were approved with the plan | Approved as recommended |
+
+## Phase 4 notes
+
+- **TEXC's own suite PDFs are refused as issued.** Eight of the twelve carry Acrobat calculation scripts. Attach a flattened copy: open the PDF and print it to PDF (Acrobat, Preview or Chrome all do). The flattened copy keeps every page and its look; the form can no longer be filled in on screen, which is right for a document sent with a proposal. TEXC03, TEXC05, TEXC10 and TEXC11 carry no scripts and pass as issued.
+- **Up to 20 files per proposal, 25 MB each.** Both are settings in code (`lib/attachments.js`, the bucket in `supabase/schema.sql`).
+- **Releasing a file** (administrators only) needs a sentence saying why it is safe to send; the reason, who released it and what the check found go into the staff audit, and the card and the checklist keep pointing it out. A file that is not a PDF, is encrypted, or is a "zip bomb" can never be released and is not kept.
+- **Removing a file from a card** does not delete it: an issued revision may still offer it. Files stay with the proposal (archive and purge are Phase 6/7).
+- **On a phone, a landscape form is small in the viewer.** Open in new tab gives the phone's own viewer, with pinch zoom. Zoom controls in the viewer can come in Phase 7 if George wants them.
+- **The demo's documents** (Ashgrove Civil, fictional) have no files; publishing it needs a file on each client-visible card, which is correct. The Phase 4 captures attach two of TEXC's own forms by their register names and codes.
 
 ## Phase 3 notes
 
@@ -65,7 +77,7 @@ answered, and say where the answer came from.
 - **The passphrase is shown once.** On first publish, with Copy; afterwards only by an administrator's read-back, which is recorded before it is shown. Every revision behind a link uses the same passphrase. "New link and passphrase" makes both new at once and kills the old link immediately.
 - **Clients can open earlier revisions** (Q4), from the footer, marked superseded with a link to the current one. A withdrawn proposal opens for nobody.
 - **The office is told on the first open** (NOTIFY_TO). The link email to the client never carries the passphrase.
-- **Online acceptance is Phase 5.** Until then an issued proposal's acceptance form says to accept by email or phone. Attachments say "available on request" (Phase 4).
+- **Online acceptance is Phase 5.** Until then an issued proposal's acceptance form says to accept by email or phone. (Attachments, which said "available on request" here, open from Phase 4.)
 - **Access**: anyone on an allowed domain (ACCOUNT_DOMAINS, default the website's domain) can ask from the sign-in page; administrators approve in People. Brand in Black accounts come from ACCOUNT_SUPERS and cannot be created or changed in the app. The staff list and roles are still to come from TEXC (C28).
 
 ### Independent security review (13 Oct 2026)

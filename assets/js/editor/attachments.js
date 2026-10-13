@@ -165,9 +165,10 @@ export function attachBox(ctx, row, rowPath) {
   if (f.status === 'override') extra.push(`${f.overrideBy}: “${f.overrideReason}”`);
   if (f.status === 'rejected' || f.status === 'cannot-verify') {
     extra.push(...f.reasons);
-    extra.push(row.visibility === 'client'
-      ? `It cannot go to the client like this. Attach a flattened copy (open it and print it to PDF) — ${ctx.BRAND.name}'s own suite PDFs carry calculation scripts and always need one. ${f.overridable ? 'Or an administrator can release it, with a reason.' : ''}`.trim()
-      : 'It is listed as available on request, so it is not sent.');
+    const release = f.overridable ? ' Or an administrator can release it, with a reason.' : '';
+    if (row.visibility !== 'client') extra.push('It is listed as available on request, so it is not sent.');
+    else if (f.status === 'rejected') extra.push(`It cannot go to the client like this. Attach a flattened copy (open it and print it to PDF) — ${ctx.BRAND.name}'s own suite PDFs carry calculation scripts and always need one.${release}`);
+    else extra.push(`It cannot go to the client unchecked. Try a fresh copy (open it and print it to PDF).${release}`);
   }
   say(f.status, ico, title, facts, ...extra);
   tools.append(

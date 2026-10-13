@@ -93,7 +93,7 @@ async function uploadPdf(c, proposal, bytes, name) {
 }
 
 /** A one-page test PDF, different each time it is asked for by name. */
-const testPdf = (title) => textPdf([title, 'A test file for the attachment checks. It carries no proposal content.']);
+export const testPdf = (title) => textPdf([title, 'A test file for the attachment checks. It carries no proposal content.']);
 
 /** A demo proposal, created, with every acknowledgement given and a checked file on each document the client can open; optionally published. */
 async function demoProposal(c, { publish = true, mutate } = {}) {
@@ -445,7 +445,7 @@ async function createFromDemo(page) {
  * wait for its verdict: the card's state once the file is stored and checked
  * (or 'error' when it was refused outright).
  */
-async function attachInEditor(page, i, name, buffer) {
+export async function attachInEditor(page, i, name, buffer) {
   const before = await page.evaluate((n) => window.__editor.state.cfg.attachments[n].file || '', i);
   await page.setInputFiles(`[data-path="attachments.${i}.file"] input[type=file]`, { name, mimeType: 'application/pdf', buffer });
   await page.waitForFunction(([n, was]) => {
