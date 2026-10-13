@@ -91,8 +91,8 @@ export async function startLocalApp({ port = 4400, keep = false, dir } = {}) {
       const url = new URL(req.url, base);
       let path = decodeURIComponent(url.pathname);
       for (const h of rules.headers) if (h.re.test(path)) for (const { key, value } of h.headers) {
-        // Locally, signed photograph links come from the stand-in storage host, not *.supabase.co.
-        res.setHeader(key, key === 'Content-Security-Policy' ? value.replace('https://*.supabase.co', sb.url) : value);
+        // Locally, signed photograph and document links come from the stand-in storage host, not *.supabase.co.
+        res.setHeader(key, key === 'Content-Security-Policy' ? value.replaceAll('https://*.supabase.co', sb.url) : value);
       }
       if (path === '/__dev/outbox') {
         res.setHeader('Content-Type', 'application/json');
@@ -116,7 +116,7 @@ export async function startLocalApp({ port = 4400, keep = false, dir } = {}) {
         if (!handler) { res.statusCode = 404; res.end('Not found'); return; }
         // Pages served by functions set their own CSP; locally, photographs come from the stand-in storage host.
         const setHeader = res.setHeader.bind(res);
-        res.setHeader = (k, v) => setHeader(k, String(k).toLowerCase() === 'content-security-policy' ? String(v).replace('https://*.supabase.co', sb.url) : v);
+        res.setHeader = (k, v) => setHeader(k, String(k).toLowerCase() === 'content-security-policy' ? String(v).replaceAll('https://*.supabase.co', sb.url) : v);
         vercelify(req, res, query, await readAll(req));
         await handler(req, res);
         // The real handlers set their own CSP on pages; the static header above covers the rest.

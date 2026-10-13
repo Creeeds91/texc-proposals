@@ -251,3 +251,24 @@ html.ed-collapsed .ed-collapse { left: 16px; }
 .ed-secret { margin-top: var(--space-4); }
 .ed-secret-row { display: flex; gap: var(--space-2); align-items: center; margin-top: 6px; }
 .ed-secret-row code { flex: 1; min-width: 0; padding: 10px 12px; border: 1px solid var(--ink-600); border-radius: var(--radius-md); background: var(--ink); color: var(--gold); font-family: Menlo, Consolas, monospace; font-size: 14px; overflow-wrap: anywhere; }
+
+/* ---- Documents: the file on each card (assets/js/editor/attachments.js) -- */
+.ed-attach { margin-top: var(--space-3); padding: var(--space-3); border: 1px dashed var(--ink-600); border-radius: var(--radius-md); background: var(--ink); }
+.ed-attach[data-state="clean"] { border-style: solid; border-color: var(--go); }
+.ed-attach[data-state="override"] { border-style: solid; border-color: var(--caution); }
+.ed-attach[data-state="rejected"], .ed-attach[data-state="cannot-verify"], .ed-attach[data-state="error"] { border-style: solid; border-color: var(--stop); }
+.ed-attach-verdict { display: flex; align-items: center; gap: var(--space-2); font-weight: 700; font-size: 13.5px; color: var(--white); }
+.ed-attach-verdict .ic { width: 16px; height: 16px; flex: none; color: var(--steel-400); }
+.ed-attach[data-state="clean"] .ed-attach-verdict .ic { color: var(--go); }
+.ed-attach[data-state="override"] .ed-attach-verdict .ic { color: var(--caution); }
+.ed-attach[data-state="rejected"] .ed-attach-verdict .ic, .ed-attach[data-state="cannot-verify"] .ed-attach-verdict .ic, .ed-attach[data-state="error"] .ed-attach-verdict .ic { color: var(--hazard); }
+.ed-attach[data-state="busy"] .ed-attach-verdict .ic { color: var(--gold); }
+.ed-attach-status .ed-hint { overflow-wrap: anywhere; }
+.ed-attach-tools { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-3); }
+.ed-attach-tools:empty { display: none; }
+.ed-attach-progress { display: block; width: 100%; height: 4px; margin-top: var(--space-2); appearance: none; border: 0; border-radius: 2px; background: var(--ink-600); overflow: hidden; }
+.ed-attach-progress[hidden] { display: none; }
+.ed-attach-progress::-webkit-progress-bar { background: var(--ink-600); }
+.ed-attach-progress::-webkit-progress-value { background: var(--gold); }
+.ed-attach-progress::-moz-progress-bar { background: var(--gold); }
+.ed-attach-release { border-color: var(--caution); }

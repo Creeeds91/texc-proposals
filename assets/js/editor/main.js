@@ -13,17 +13,18 @@
  * /editor/<id> opens a proposal; /editor alone opens the list of proposals.
  * Phone: the drawer is a full-screen sheet with an Edit / Preview switch.
  */
-import { applyConfig, initEffects } from '../proposal.js';
+import { applyConfig, initEffects, setHooks } from '../proposal.js';
 import { SECTIONS, PINNED_FIRST, PINNED_LAST, visibleSections, STATUS } from '../schema.js';
 import { runChecks } from '../checks.js';
 import { h, icon, getIn, setIn, clone, announce, toPath } from './dom.js';
 import { panelFor } from './panels.js';
 import { renderField } from './fields.js';
-import { serverSaver, readBackup, clearBackup } from './store.js';
+import { serverSaver, readBackup, clearBackup, sameContent } from './store.js';
 import { previewMedia, uploadMedia } from './media.js';
 import { openChecklist } from './checklist.js';
 import { api } from './api.js';
 import { openPeople } from './people.js';
+import { loadFiles, filesContext, previewHook } from './attachments.js';
 
 const D = document;
 const ROOT = D.documentElement;
@@ -150,7 +151,7 @@ const ctx = {
     const r = await api('GET', `/api/proposals?id=${PROPOSAL_ID}`);
     if (r.ok) { state.proposal = r.json; renderStatus(); schedulePreview(); }
   },
-  checkCtx: () => ({ today: today(), services: TPL.services, register: TPL.register, brand: BRAND.name }),
+  checkCtx: () => ({ today: today(), services: TPL.services, register: TPL.register, brand: BRAND.name, files: filesContext() }),
   reveal(section, field) {
     state.open.add(section);
     renderDrawer();
@@ -553,7 +554,7 @@ async function boot() {
 
   // Changes this browser kept but the server never received.
   const backup = readBackup(PROPOSAL_ID);
-  if (backup && backup.baseVersion === r.json.version && JSON.stringify(backup.cfg) !== JSON.stringify(r.json.config)) {
+  if (backup && backup.baseVersion === r.json.version && !sameContent(backup.cfg, r.json.config)) {
     const dlg = dialog('Unsaved changes found',
       h('p', { class: 'ed-hint ed-block', text: `This browser kept changes from ${timeOf(backup.at)} that did not reach the server.` }),
       h('div', { class: 'ed-dialog-foot' },
@@ -563,10 +564,20 @@ async function boot() {
 
   renderDrawer();
   renderStatus();
+  // The preview's View and Download buttons open this proposal's own files.
+  setHooks({ attachment: previewHook(ctx) });
   applyConfig(withIssue(await previewMedia(state.cfg, PROPOSAL_ID)));
   initEffects(D);
   ROOT.classList.add('ready');
   if (location.hash === '#people' && ctx.isAdmin()) openPeople(ctx);
+  // What the check found for each attached file; the checklist waits for it.
+  // Only the Documents panel shows them; elsewhere the badges are enough, and
+  // redrawing the drawer under someone's typing is not.
+  loadFiles(PROPOSAL_ID).then((ok) => {
+    if (!ok) { toast('The attached files could not be loaded. Reload to try again.'); return; }
+    state.filesLoaded = true;
+    if (state.open.has('attachments')) renderDrawer(); else updateBadges();
+  });
 
   window.addEventListener('beforeunload', (e) => { if (saver.dirty()) { saver.flush(); e.preventDefault(); } });
   D.addEventListener('keydown', (e) => {

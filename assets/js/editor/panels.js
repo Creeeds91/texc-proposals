@@ -6,6 +6,7 @@
  */
 import { h, icon, toPath, fillTokens, isConfirmValue, clone } from './dom.js';
 import { renderField, note } from './fields.js';
+import { attachBox } from './attachments.js';
 import { DOC_TYPES, STATUS } from '../schema.js';
 import { BASES, lineAmountCents, quoteTotals, formatAUD } from '../money.js';
 
@@ -274,9 +275,10 @@ export function panelFor(id, ctx) {
       { type: 'lines', path: 'quote.exclusions', label: 'Exclusions' },
     ];
     case 'attachments': return [
-      { type: 'note', tone: 'warn', text: 'Files are uploaded, checked and attached in Phase 4. Until then these are cards only.' },
+      { type: 'note', text: `Each document the client can open needs a PDF, up to 25 MB. Every file is checked before it can be sent: anything that can run (scripts, launch actions, embedded files) is refused. ${ctx.BRAND.name}'s own suite PDFs carry calculation scripts, so attach a flattened copy — open it and print it to PDF.` },
       { type: 'rows', path: 'attachments', label: 'Documents', addLabel: 'Add a document', newId: () => `a${Date.now().toString(36)}`, title: (r) => r.title || 'Document',
         newRow: () => ({ id: `a${Date.now().toString(36)}`, category: 'project', visibility: 'client' }),
+        extra: (row, i, c, rowPath) => attachBox(c, row, rowPath),
         columns: [
           { type: 'text', path: 'title', label: 'Title', confirm: false },
           { type: 'select', path: 'category', label: 'Group', options: CATEGORIES, noBlank: true, confirm: false },

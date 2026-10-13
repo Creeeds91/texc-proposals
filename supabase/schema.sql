@@ -453,6 +453,37 @@ begin
   return jsonb_build_object('first', coalesce(first, false));
 end $$;
 
+-- ---------------------------------------------------------------- attachments (Phase 4)
+
+-- The files (PDFs) uploaded to a proposal: the facts about each file and the
+-- result of its structural check (lib/pdf-inspect.js). How a file is presented
+-- — its title, group, who may open it — lives on the draft's document card,
+-- which points here by id; a published revision binds the exact files it
+-- offered in texc_proposal_revisions.attachments_snapshot. Stored paths are
+-- content-addressed and never overwritten.
+create table if not exists public.texc_attachments (
+  id              uuid primary key default gen_random_uuid(),
+  proposal_id     uuid not null references public.texc_proposals (id),
+  storage_path    text not null,
+  original_name   text not null default '',
+  sha256          text not null check (sha256 ~ '^[a-f0-9]{64}$'),
+  bytes           bigint not null default 0,
+  pages           integer,
+  thumb_path      text,
+  scan_status     text not null default 'pending' check (scan_status in ('pending', 'clean', 'rejected', 'cannot-verify', 'override')),
+  scan_detail     jsonb not null default '{}'::jsonb,
+  scanned_at      timestamptz,
+  override_by     text,
+  override_reason text,
+  source          text not null default 'upload' check (source in ('upload', 'suite')),
+  source_ref      text,
+  uploaded_by     text not null,
+  created_at      timestamptz not null default now(),
+  archived_at     timestamptz,
+  unique (proposal_id, sha256)
+);
+create index if not exists texc_attachments_proposal on public.texc_attachments (proposal_id);
+
 -- ---------------------------------------------------------------- locked down from birth
 
 do $$
@@ -460,7 +491,7 @@ declare t text;
 begin
   foreach t in array array['texc_users', 'texc_login_tokens', 'texc_user_sessions', 'texc_proposals',
     'texc_proposal_revisions', 'texc_revision_keys', 'texc_drafts', 'texc_events', 'texc_proposal_views',
-    'texc_settings', 'texc_counters', 'texc_rate_limits', 'texc_staff_audit'] loop
+    'texc_settings', 'texc_counters', 'texc_rate_limits', 'texc_staff_audit', 'texc_attachments'] loop
     execute format('alter table public.%I enable row level security', t);
     execute format('revoke all on table public.%I from anon, authenticated', t);
     execute format('grant all on table public.%I to service_role', t);

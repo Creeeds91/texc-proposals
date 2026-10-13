@@ -23,6 +23,9 @@
  *   editor        the editor against the real stack: edits, rows, CONFIRM, upload,
  *                 checklist, server autosave, a colleague's conflicting save, phone   (stack + browser)
  *   flow          staff to client: publish, unlock, revise, supersede, rotate, approve a person   (stack + browser)
+ *   attachments   the PDF check: built fixtures for each way a file can be unsafe, TEXC's
+ *                 own suite PDFs against a second parser's view of them, their flattened
+ *                 copies, and a fuzz that it never throws     (poppler, pypdf, sibling ../texc)
  *   content-sync  website wording and tokens still match the website, and every
  *                 Chalmers-derived library line is still TEXC's exact wording (sibling ../texc)
  *
@@ -34,12 +37,15 @@ import { readFileSync, readdirSync, existsSync, statSync, mkdirSync, writeFileSy
 import { resolve, dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync, spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { build, checkView, templateData } from './build.mjs';
 import { BRAND } from '../lib/brand.js';
-import { CLIENT_CSP, EDITOR_CSP } from '../lib/csp.js';
+import { CLIENT_CSP, EDITOR_CSP, WORKER_CSP } from '../lib/csp.js';
 import { quoteTotals, lineAmountCents, formatAUD, formatQty } from '../assets/js/money.js';
 import { runChecks } from '../assets/js/checks.js';
 import { scanText, localityWarning } from '../assets/js/sensitive.js';
+import { inspectPdf } from '../lib/pdf-inspect.js';
+import { FIXTURES as PDF_FIXTURES } from './lib/pdf-fixtures.mjs';
 import { suiteSchema, suiteEnvelope, suiteRefusals, suiteEditor, suiteFlow, closeServerSuites } from './lib/server-suites.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -186,13 +192,20 @@ function suiteCsp() {
   }
   // The editor may differ from the client page in exactly one way: blob: previews of a just-resized photo.
   if (EDITOR_CSP.replace("img-src 'self' blob:", "img-src 'self'") !== CLIENT_CSP) problems.push('EDITOR_CSP differs from CLIENT_CSP by more than img-src blob:');
+  // pdf.js's worker parses untrusted PDFs: it carries its own, narrower policy (lib/csp.js WORKER_CSP).
+  const vendor = (cfg.headers || []).find((h) => h.source === '/assets/vendor/(.*)');
+  const vendorCsp = vendor && (vendor.headers.find((h) => h.key === 'Content-Security-Policy') || {}).value;
+  if (vendorCsp !== WORKER_CSP) problems.push('vercel.json does not send WORKER_CSP with /assets/vendor/ (the pdf.js worker)');
+  if (cfg.headers.indexOf(vendor) < cfg.headers.indexOf(all)) problems.push('the /assets/vendor/ header rule must come after /(.*) so its policy wins');
+  for (const never of ["'unsafe-inline'", "'unsafe-eval'", 'blob:', 'data:', '*']) if (WORKER_CSP.split(/[\s;]+/).includes(never)) problems.push(`the worker CSP allows ${never}`);
+  if (!/connect-src 'self'( https:\/\/\S+)?;/.test(CLIENT_CSP) || !CLIENT_CSP.includes("worker-src 'self'")) problems.push('the client CSP must allow the viewer\'s worker and its fetch of the storage host, and nothing wider');
   if (get('X-Frame-Options') !== 'DENY') problems.push('X-Frame-Options must be DENY');
   if (get('X-Content-Type-Options') !== 'nosniff') problems.push('X-Content-Type-Options must be nosniff');
   if (get('Referrer-Policy') !== 'no-referrer') problems.push('Referrer-Policy must be no-referrer');
   if (!/noindex/.test(get('X-Robots-Tag') || '')) problems.push('X-Robots-Tag must carry noindex');
   if (!/Disallow:\s*\/\s*$/m.test(read('robots.txt'))) problems.push('robots.txt must disallow everything');
   if (!(cfg.regions || []).includes('syd1')) problems.push('functions must be pinned to syd1');
-  return problems.length ? { status: FAIL, detail: problems } : { status: PASS, detail: ['views and the editor page clean and current; headers strict', 'vercel.json CSP = CLIENT_CSP; EDITOR_CSP adds only img-src blob:'] };
+  return problems.length ? { status: FAIL, detail: problems } : { status: PASS, detail: ['views and the editor page clean and current; headers strict', 'vercel.json CSP = CLIENT_CSP; EDITOR_CSP adds only img-src blob:', 'the pdf.js worker runs under its own narrower policy (no eval, no blob:, own origin only)'] };
 }
 
 /* ---------------------------------------------------------- conventions */
@@ -304,17 +317,41 @@ function suiteRules() {
   for (const f of want) expect(fields(empty).includes(f), `empty proposal: no blocker for ${f}`);
   expect(!empty.ready, 'empty proposal: reported ready');
 
-  // The demo: nothing to fix, only acknowledgements, and acknowledging them all makes it ready.
-  const d = runChecks(demo, ctx);
+  // The demo as shipped: its client-visible documents have no files (it is fictional), and that is all.
+  const bare = runChecks(demo, ctx);
+  const clientCards = demo.attachments.filter((a) => a.visibility === 'client').length;
+  expect(bare.blockers.length === clientCards && bare.blockers.every((b) => b.section === 'attachments' && /has no file/.test(b.message)),
+    `demo without files: expected ${clientCards} "has no file" blockers, got ${bare.blockers.map((b) => b.message).join('; ')}`);
+
+  // With a checked file on each: nothing to fix, only acknowledgements, and acknowledging them all makes it ready.
+  const FILE = '00000000-0000-4000-8000-000000000001';
+  const withFiles = (c) => { for (const a of c.attachments || []) if (a.visibility === 'client') a.file = FILE; return c; };
+  const fctx = (status) => ({ ...ctx, files: { [FILE]: { status } } });
+  const filed = withFiles(clone(demo));
+  const d = runChecks(filed, fctx('clean'));
   expect(d.blockers.length === 0, `demo: ${d.blockers.length} blockers (${d.blockers.map((b) => b.message).join('; ')})`);
   expect(d.acks.length > 0 && !d.ready, 'demo: unacknowledged presets and prototype rates did not hold it back');
-  const acked = runChecks({ ...clone(demo), acks: d.acks.map((a) => a.key) }, ctx);
+  const acked = runChecks({ ...clone(filed), acks: d.acks.map((a) => a.key) }, fctx('clean'));
   expect(acked.ready, 'demo: still not ready after every acknowledgement');
 
   // An acknowledgement belongs to the exact text: change the rate and it is asked again.
-  const rerate = clone(demo); rerate.acks = d.acks.map((a) => a.key);
+  const rerate = clone(filed); rerate.acks = d.acks.map((a) => a.key);
   rerate.quote.lines[0].rateCents += 100;
-  expect(!runChecks(rerate, ctx).ready, 'changing an acknowledged rate did not ask again');
+  expect(!runChecks(rerate, fctx('clean')).ready, 'changing an acknowledged rate did not ask again');
+
+  // Files: only one that passed, or that an administrator released, goes to a client.
+  for (const [status, blocks] of [['clean', false], ['override', false], ['rejected', true], ['cannot-verify', true], ['pending', true]]) {
+    const r = runChecks(clone(filed), fctx(status));
+    expect((r.blockers.length > 0) === blocks, `a file that is ${status}: expected ${blocks ? 'a blocker' : 'no blocker'}, got ${r.blockers.map((b) => b.message).join('; ') || 'none'}`);
+  }
+  expect(runChecks(clone(filed), fctx('override')).warnings.some((w) => /released by an administrator/.test(w.message)), 'a released file is not pointed out in the warnings');
+  expect(runChecks(clone(filed), { ...ctx, files: {} }).blockers.some((b) => /no longer on this proposal/.test(b.message)), 'a card pointing at a file the proposal no longer has did not block');
+  const onRequest = clone(demo); for (const a of onRequest.attachments) a.visibility = 'on-request';
+  expect(runChecks(onRequest, ctx).blockers.length === 0, 'documents listed "on request" were asked for files');
+  const hidden = clone(demo); hidden.layout.sections.find((x) => x.id === 'attachments').on = false;
+  expect(runChecks(hidden, ctx).blockers.length === 0, 'a hidden attachments section still asked for files');
+  const twin = withFiles(clone(demo)); twin.attachments[1].id = twin.attachments[0].id;
+  expect(runChecks(twin, fctx('clean')).blockers.some((b) => /damaged/.test(b.message)), 'two cards with the same id did not block');
 
   // Each blocker, one case at a time.
   const cases = [
@@ -332,9 +369,9 @@ function suiteRules() {
     ['a limit with no source', (c) => { c.env = { ...(c.env || {}), limits: { rows: [{ parameter: 'PPV', limit: { $confirm: 'x' } }] } }; c.env.limits.rows[0].limit = '5 mm/s'; }, true],
   ];
   for (const [name, mutate, blocks] of cases) {
-    const c = clone(demo);
+    const c = clone(filed);
     mutate(c);
-    const r = runChecks(c, ctx);
+    const r = runChecks(c, fctx('clean'));
     expect((r.blockers.length > 0) === blocks, `${name}: expected ${blocks ? 'a blocker' : 'no blocker'}, got ${r.blockers.length} (${r.blockers.map((b) => b.message).join('; ')})`);
   }
 
@@ -526,11 +563,102 @@ async function suitePrint() {
   return fails.length ? { status: FAIL, detail: fails } : { status: PASS, detail: [`${headings.length} section headings found in a ${pages}-page A4 PDF (demo-out/demo-proposal-A4.pdf)`] };
 }
 
+/* ----------------------------------------------------------- attachments */
+
+function suiteAttachments() {
+  const fails = [];
+  const notes = [];
+  const skips = [];
+  // 1. Each way a file can be safe or not, built in code.
+  for (const [name, f] of Object.entries(PDF_FIXTURES)) {
+    const started = Date.now();
+    const r = inspectPdf(f.bytes());
+    const ms = Date.now() - started;
+    if (r.status !== f.status || r.overridable !== f.overridable) fails.push(`${name}: ${r.status}${r.overridable ? ' (overridable)' : ''}, expected ${f.status}${f.overridable ? ' (overridable)' : ''}`);
+    if (f.pages !== undefined && r.pages !== f.pages) fails.push(`${name}: counted ${r.pages} pages, expected ${f.pages}`);
+    // Work is bounded: the ones that hit a budget expand hundreds of MB to prove it, the rest are instant.
+    if (ms > (f.slow ? 15000 : 1500)) fails.push(`${name}: took ${ms} ms`);
+  }
+  notes.push(`${Object.keys(PDF_FIXTURES).length} built files each judged as expected (clean, refused, or cannot verify; and whether an administrator may release it)`);
+
+  // 2. It never throws, whatever the bytes: a clean file, damaged at random.
+  const base = PDF_FIXTURES['clean, three pages'].bytes();
+  let seed = 7;
+  const rand = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed; };
+  for (let i = 0; i < 400; i += 1) {
+    const b = Buffer.from(base);
+    for (let k = 0; k < 1 + (i % 12); k += 1) b[8 + (rand() % (b.length - 8))] = rand() & 255;
+    const cut = i % 5 === 0 ? b.subarray(0, 8 + (rand() % (b.length - 8))) : b;
+    try {
+      const r = inspectPdf(cut);
+      if (!['clean', 'rejected', 'cannot-verify'].includes(r.status)) { fails.push(`a damaged file got status ${r.status}`); break; }
+    } catch (e) { fails.push(`a damaged file made the check throw: ${e.message}`); break; }
+  }
+  notes.push('400 randomly damaged copies: never threw, always a verdict');
+
+  // 3. The vendored pdf.js is exactly the published package (assets/vendor/pdfjs/README.md).
+  const viewerSrc = read('assets/js/pdf-viewer.js');
+  const version = (/\/assets\/vendor\/pdfjs\/([0-9.]+)\//.exec(viewerSrc) || [])[1];
+  const vdir = version ? resolve(ROOT, `assets/vendor/pdfjs/${version}`) : '';
+  if (!version || !existsSync(join(vdir, 'SHA256SUMS'))) fails.push('assets/js/pdf-viewer.js does not point at a vendored pdf.js with a SHA256SUMS');
+  else {
+    const listed = new Map(read(`assets/vendor/pdfjs/${version}/SHA256SUMS`).trim().split('\n').map((l) => { const [h, f] = l.split(/\s+/); return [f.replace(/^\.\//, ''), h]; }));
+    const present = walk(`assets/vendor/pdfjs/${version}`, ['']).map((f) => relative(vdir, resolve(ROOT, f))).filter((f) => f !== 'SHA256SUMS');
+    for (const f of present) {
+      const want = listed.get(f);
+      if (!want) fails.push(`assets/vendor/pdfjs/${version}/${f} is not in SHA256SUMS`);
+      else if (createHash('sha256').update(readFileSync(join(vdir, f))).digest('hex') !== want) fails.push(`assets/vendor/pdfjs/${version}/${f} differs from SHA256SUMS`);
+    }
+    for (const f of listed.keys()) if (!present.includes(f)) fails.push(`assets/vendor/pdfjs/${version}/${f} is listed but missing`);
+    notes.push(`pdf.js ${version}: all ${listed.size} vendored files match SHA256SUMS`);
+  }
+
+  // 4. TEXC's own suite PDFs, against a second parser's reading of them, then flattened.
+  const dir = resolve(ROOT, '../texc/documents/exemplars/pdf');
+  const has = (cmd) => spawnSync(cmd, ['-v'], { encoding: 'utf8' }).status !== null;
+  // The second opinion on scripts is pypdf (scripts/lib/pdf-js-oracle.py), a different parser.
+  const files = existsSync(dir) ? readdirSync(dir).filter((n) => n.endsWith('.pdf')).sort() : [];
+  const oracle = files.length ? spawnSync('python3', ['-I', resolve(ROOT, 'scripts/lib/pdf-js-oracle.py'), ...files.map((n) => join(dir, n))], { encoding: 'utf8' }) : null;
+  let opinion = null;
+  try { opinion = oracle && oracle.status === 0 ? JSON.parse(oracle.stdout) : null; } catch { opinion = null; }
+  if (!existsSync(dir)) skips.push('TEXC suite PDFs not checked: no sibling ../texc checkout');
+  else if (!has('pdfinfo') || !has('pdftocairo')) skips.push('TEXC suite PDFs not checked: poppler (pdfinfo, pdftocairo) is not installed');
+  else if (!opinion) skips.push('TEXC suite PDFs not checked: no second opinion (python3 with pypdf is not installed)');
+  else {
+    const tmp = resolve(ROOT, 'demo-out/attachments-check');
+    mkdirSync(tmp, { recursive: true });
+    let refused = 0;
+    let flattened = 0;
+    for (const name of files) {
+      const file = join(dir, name);
+      const bytes = readFileSync(file);
+      const r = inspectPdf(bytes);
+      const info = spawnSync('pdfinfo', [file], { encoding: 'utf8' }).stdout || '';
+      const pages = Number((/^Pages:\s+(\d+)/m.exec(info) || [])[1]);
+      const js = opinion[file].js === true;
+      if (js && r.status === 'clean') fails.push(`${name}: pypdf finds JavaScript, the check passed it`);
+      if (!js && r.status !== 'clean') fails.push(`${name}: pypdf finds no JavaScript, the check said ${r.status} (${r.reasons.join(' ')})`);
+      if (r.status === 'rejected') { refused += 1; if (!r.overridable) fails.push(`${name}: refused outright — an administrator could not release it`); }
+      if (r.pages !== pages) fails.push(`${name}: counted ${r.pages} pages, poppler says ${pages}`);
+      const flat = join(tmp, name.replace(/\.pdf$/, '-flattened.pdf'));
+      const out = spawnSync('pdftocairo', ['-pdf', file, flat], { encoding: 'utf8' });
+      if (out.status !== 0) { fails.push(`${name}: could not be flattened for the check`); continue; }
+      const f = inspectPdf(readFileSync(flat));
+      if (f.status !== 'clean') fails.push(`${name}: its flattened copy was ${f.status} (${f.reasons.join(' ')})`);
+      else if (f.pages !== pages) fails.push(`${name}: its flattened copy counted ${f.pages} pages, not ${pages}`);
+      else flattened += 1;
+    }
+    notes.push(`TEXC suite PDFs: ${refused} of ${files.length} refused for JavaScript, exactly the ones pypdf finds scripts in; page counts agree with poppler; all ${flattened} flattened copies clean`);
+  }
+  if (fails.length) return { status: FAIL, detail: fails };
+  return { status: skips.length ? SKIP : PASS, detail: [...notes, ...skips] };
+}
+
 /* ---------------------------------------------------------------- run */
 
 const SUITES = {
   contract: suiteContract, brand: suiteBrand, csp: suiteCsp, conventions: suiteConventions, quote: suiteQuote,
-  design: suiteDesign, rules: suiteRules,
+  design: suiteDesign, rules: suiteRules, attachments: suiteAttachments,
   confirm: suiteConfirm, render: suiteRender, print: suitePrint, 'content-sync': suiteContentSync,
   schema: suiteSchema, envelope: () => suiteEnvelope({ browserSession }), refusals: suiteRefusals, editor: suiteEditor, flow: suiteFlow,
 };

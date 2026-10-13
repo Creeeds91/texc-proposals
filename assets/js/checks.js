@@ -10,13 +10,18 @@
  *             used on another site, rates from the superseded prototype.
  *   warnings  worth knowing, never blocking
  *
- * ctx: { today: 'YYYY-MM-DD', services: [{slug, pending}], register: [{id, status}], brand: 'name' }
+ * ctx: { today: 'YYYY-MM-DD', services: [{slug, pending}], register: [{id, status}], brand: 'name',
+ *        files: { <attachment id>: { status } } }   the files on this proposal, when known
+ *        (the editor and the server both pass them; without them only "has a file" is checked)
  */
 import { SECTIONS, SECTION_OF_KEY, visibleSections, isConfirm } from './schema.js';
 import { scanText, localityWarning } from './sensitive.js';
 import { lineAmountCents } from './money.js';
 
 const LABEL = Object.fromEntries(SECTIONS.map((s) => [s.id, s.label]));
+/** A file a client may be sent: it passed the check, or an administrator released it with a reason. */
+export const RELEASED_FILE = new Set(['clean', 'override']);
+export const CARD_ID = /^[a-z0-9-]{1,40}$/i;
 const SKIP_KEYS = new Set(['layout', 'media', 'acks', 'presetsUsed', 'v', 'template', 'demo', 'documentTitle', 'unlocks', '_about']);
 const EMAIL = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -98,6 +103,28 @@ export function runChecks(cfg = {}, ctx = {}) {
   const drafts = new Set((ctx.register || []).filter((d) => d.status !== 'approved').map((d) => d.id));
   for (const d of cfg.docs?.items || []) if (drafts.has(d.id) && d.provide !== false) block('docs', `${d.id} is a draft awaiting ${B} approval and cannot be offered`, 'docs.items');
 
+  // 4. Every document a client can open has a file that passed the check.
+  if (visible.has('attachments')) {
+    const seen = new Set();
+    (Array.isArray(cfg.attachments) ? cfg.attachments : []).forEach((a, i) => {
+      if (!a || a.visibility !== 'client') return;
+      const name = str(a.title) || `Attachment ${i + 1}`;
+      const field = `attachments[${i + 1}]`;
+      if (!str(a.title)) block('attachments', `Attachment ${i + 1} has no title`, field);
+      if (!CARD_ID.test(String(a.id || '')) || seen.has(a.id)) block('attachments', `“${name}” needs removing and adding again (its card is damaged)`, field);
+      seen.add(a.id);
+      if (!a.file) { block('attachments', `“${name}” has no file. Attach a PDF, or list it as available on request.`, field); return; }
+      if (!ctx.files) return;
+      const f = ctx.files[a.file];
+      if (!f) block('attachments', `“${name}”: its file is no longer on this proposal. Attach it again.`, field);
+      else if (!RELEASED_FILE.has(f.status)) {
+        block('attachments', f.status === 'pending'
+          ? `“${name}”: its file has not been checked yet.`
+          : `“${name}”: its file did not pass the check. Attach a flattened (printed-to-PDF) copy, or an administrator can release it with a reason.`, field);
+      }
+    });
+  }
+
   // 4. Images need alt text.
   const imageRefs = [];
   const findImages = (v, path) => {
@@ -168,7 +195,9 @@ export function runChecks(cfg = {}, ctx = {}) {
   if (visible.has('docs') && cfg.docs?.workflow?.on === true) warn('docs', `The workflow diagram is on, but ${B} has not approved that document yet (C21).`);
   if (visible.has('logistics')) warn('logistics', `The logistics lines still need ${B} sign-off as proposal wording (C20).`);
   if (!present(cfg.terms?.body)) warn('terms', 'No terms and conditions are attached; the acceptance wording leaves them out (Q7).');
-  if (visible.has('attachments') && (cfg.attachments || []).some((a) => a.visibility === 'client' && !a.file)) warn('attachments', 'Attachment files are added in Phase 4; these cards have no file yet.');
+  if (visible.has('attachments') && ctx.files && (cfg.attachments || []).some((a) => a && a.visibility === 'client' && ctx.files[a.file]?.status === 'override')) {
+    warn('attachments', 'A file the check did not pass has been released by an administrator. It goes to the client as it is.');
+  }
   if (cfg.demo === true) warn('cover', 'This is the demo proposal (fictional client and site).');
 
   const ready = blockers.length === 0 && acks.every((a) => a.done);

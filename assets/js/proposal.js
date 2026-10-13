@@ -917,15 +917,35 @@ export function initEffects(root = D) {
       : 'Preview only — online acceptance opens when this proposal is issued.';
   });
 
-  // Attachments open from the issued proposal (Phase 4).
-  D.addEventListener('click', (e) => {
+  // Documents. View opens the viewer (assets/js/pdf-viewer.js, loaded on first
+  // use); Download saves the file without leaving the page. Each asks whoever
+  // runs the page for a fresh link — the gate for a client, the editor for staff.
+  D.addEventListener('click', async (e) => {
     const b = e.target.closest && e.target.closest('[data-attachment]');
     if (!b) return;
-    const n = b.closest('.att').querySelector('.att-meta');
-    if (n && !n.dataset.previewed) {
-      n.dataset.previewed = '1';
-      n.append(D.createTextNode(hooks.issued === true ? ` · Available from ${BRAND.name} on request` : ' · Opens in the issued proposal'));
+    const card = b.closest('.att');
+    let note = card.querySelector('.att-note');
+    if (!note) {
+      note = el('p', 'att-note');
+      note.setAttribute('role', 'status');
+      card.querySelector('.att-body').append(note);
     }
+    note.textContent = '';
+    if (typeof hooks.attachment !== 'function') { note.textContent = 'Opens in the issued proposal.'; return; }
+    const id = b.dataset.attachment;
+    const link = (opts) => hooks.attachment(id, opts);
+    const said = (err, fallback) => (err && err.userMessage) || fallback;
+    let viewer;
+    try { viewer = await import('./pdf-viewer.js'); } catch { note.textContent = 'The document viewer could not load. Check your connection and try again.'; return; }
+    if (b.dataset.action === 'download') {
+      b.disabled = true;
+      b.setAttribute('aria-busy', 'true');
+      try { await viewer.downloadVia(link); note.textContent = 'Downloaded.'; } catch (err) { note.textContent = said(err, 'The download did not complete. Try again.'); }
+      b.disabled = false;
+      b.setAttribute('aria-busy', 'false');
+      return;
+    }
+    viewer.openViewer({ title: card.querySelector('.att-title').textContent, meta: card.querySelector('.att-meta').textContent, link });
   });
 
   state.effects = { observe, watchSections };
@@ -934,7 +954,12 @@ export function initEffects(root = D) {
 
 /* -------------------------------------------------------------------- boot */
 
-/** Hooks for the gate (assets/js/gate.js): { issued: true, beforePrint: async () => {} }. */
+/**
+ * Hooks for whoever runs the page — the gate (assets/js/gate.js) or the editor:
+ *   issued        true on a client's issued proposal
+ *   beforePrint   async () => {}   refresh anything that has gone stale
+ *   attachment    async (cardId, { download }) => { url, name, bytes }   a fresh link to one document
+ */
 const hooks = {};
 export function setHooks(h) { Object.assign(hooks, h); }
 

@@ -25,6 +25,12 @@ export function readBackup(id) {
 function writeBackup(id, cfg, baseVersion) {
   try { localStorage.setItem(backupKey(id), JSON.stringify({ cfg, baseVersion, at: new Date().toISOString() })); } catch { /* storage full: the server copy still saves */ }
 }
+/** The same content, whatever order its keys are in (the database stores JSON with its keys reordered). */
+export function sameContent(a, b) {
+  const canon = (v) => (Array.isArray(v) ? v.map(canon) : v && typeof v === 'object'
+    ? Object.fromEntries(Object.keys(v).filter((k) => v[k] !== undefined).sort().map((k) => [k, canon(v[k])])) : v);
+  return JSON.stringify(canon(a)) === JSON.stringify(canon(b));
+}
 export function clearBackup(id) {
   try { localStorage.removeItem(backupKey(id)); } catch { /* nothing to clear */ }
 }
@@ -61,7 +67,7 @@ export function serverSaver({ id, getCfg, version, onState, onConflict }) {
       blocked = false;
       // Changes typed while this save was in the air still need saving.
       if (lastChangeAt > sentAt) { firstDirtyAt = lastChangeAt; schedule(); onState('dirty'); }
-      else { dirty = false; firstDirtyAt = 0; clearBackup(id); onState('saved', r.json.updated_at); }
+      else { dirty = false; firstDirtyAt = 0; clearTimeout(backupTimer); clearBackup(id); onState('saved', r.json.updated_at); }
       return true;
     }
     if (r.status === 409) { blocked = true; onState('conflict', r.json); onConflict(r.json); return false; }
@@ -79,13 +85,14 @@ export function serverSaver({ id, getCfg, version, onState, onConflict }) {
       lastChangeAt = Date.now();
       if (!dirty) { dirty = true; firstDirtyAt = lastChangeAt; onState('dirty'); }
       clearTimeout(backupTimer);
-      backupTimer = setTimeout(() => writeBackup(id, getCfg(), current), 400);
+      // Only while something is unsaved: a copy written after the save landed would be offered back for nothing.
+      backupTimer = setTimeout(() => { if (dirty) writeBackup(id, getCfg(), current); }, 400);
       if (!blocked) schedule();
     },
     flush: () => save(false),
     force: () => { dirty = true; return save(true); },
     /** Take the server's copy after a conflict. */
-    adopt(v) { current = v; dirty = false; blocked = false; clearTimeout(timer); clearBackup(id); },
+    adopt(v) { current = v; dirty = false; blocked = false; clearTimeout(timer); clearTimeout(backupTimer); clearBackup(id); },
     dirty: () => dirty,
     version: () => current,
   };

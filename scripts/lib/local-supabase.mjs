@@ -171,8 +171,15 @@ async function gatewayHandle(req, res, ctx) {
     res.writeHead(status, { 'content-type': 'application/json', ...headers });
     res.end(typeof body === 'string' || Buffer.isBuffer(body) ? body : JSON.stringify(body));
   };
-  // A signed storage download needs no key: the token in the URL is the authority.
+  // Signed storage URLs need no key: the token in the URL is the authority.
+  // Browsers reach these directly, so they answer CORS as the platform does.
+  if (url.pathname.startsWith('/storage/v1/object/') && req.method === 'OPTIONS') {
+    res.writeHead(204, { ...CORS, 'access-control-allow-methods': 'GET, PUT, POST, OPTIONS', 'access-control-allow-headers': 'content-type, x-upsert, cache-control, authorization, apikey', 'access-control-max-age': '600' });
+    res.end();
+    return;
+  }
   if (req.method === 'GET' && url.pathname.startsWith('/storage/v1/object/sign/')) return storageSignedGet(url, res, ctx);
+  if (req.method === 'PUT' && url.pathname.startsWith('/storage/v1/object/upload/sign/')) return storageSignedPut(req, url, res, ctx);
 
   // The platform refuses an opaque key presented as a bearer token ("Invalid JWT").
   if (/^Bearer\s+sb_/i.test(auth)) return send(401, { message: 'Invalid JWT' });
@@ -207,16 +214,60 @@ async function gatewayHandle(req, res, ctx) {
  * Storage, for exactly the calls lib/storage.js makes (Supabase Storage API):
  *   POST /storage/v1/object/<bucket>/<path>      upload (x-upsert: false → 400 if it exists)
  *   POST /storage/v1/object/sign/<bucket>        { expiresIn, paths } → [{ path, signedURL, error }]
- *   GET  /storage/v1/object/sign/<bucket>/<path>?token=…   the bytes, if the token is valid
+ *   POST /storage/v1/object/sign/<bucket>/<path> { expiresIn } → { signedURL }
+ *   GET  /storage/v1/object/sign/<bucket>/<path>?token=…[&download=name]   the bytes, if the token is valid
+ *   POST /storage/v1/object/upload/sign/<bucket>/<path>   → { url, token }: a two-hour upload URL
+ *   PUT  /storage/v1/object/upload/sign/<bucket>/<path>?token=…   the browser's upload, no key
+ *   GET  /storage/v1/object/authenticated/<bucket>/<path>   the bytes, with the secret key
  *   DELETE /storage/v1/object/<bucket>           { prefixes }
- * Buckets are private: there is no unsigned read.
+ * Buckets are private: there is no unsigned read. Each bucket's size and type
+ * limits are enforced as supabase/schema.sql sets them.
  */
-const BUCKETS = new Set(['texc-media', 'texc-attachments', 'texc-acceptances']);
+const BUCKETS = new Map([
+  ['texc-media', { max: 3 * 1024 * 1024, types: ['image/webp', 'image/jpeg'] }],
+  ['texc-attachments', { max: 25 * 1024 * 1024, types: ['application/pdf'] }],
+  ['texc-acceptances', { max: 1024 * 1024, types: ['image/png', 'text/html'] }],
+]);
+const CORS = { 'access-control-allow-origin': '*', 'access-control-expose-headers': 'content-length, content-type, content-disposition' };
 const safePath = (p) => p && !p.split('/').some((seg) => seg === '..' || seg === '') && /^[\w./-]+$/.test(p);
+
+/** Store one object, as the platform would: limits first, never over an existing one. */
+async function storePut(req, ctx, bucket, path, send) {
+  const limits = BUCKETS.get(bucket);
+  if (!safePath(path)) return send(400, { message: 'Invalid key' });
+  const type = String(req.headers['content-type'] || 'application/octet-stream').split(';')[0].trim();
+  if (!limits.types.includes(type)) return send(400, { statusCode: '415', error: 'invalid_mime_type', message: `mime type ${type} is not supported` });
+  const file = join(ctx.store, bucket, path);
+  const upsert = String(req.headers['x-upsert'] || 'false') === 'true';
+  if (existsSync(file) && !upsert) return send(400, { statusCode: '409', error: 'Duplicate', message: 'The resource already exists' });
+  const body = await readAll(req);
+  if (body.length > limits.max) return send(413, { statusCode: '413', error: 'Payload too large', message: 'The object exceeded the maximum allowed size' });
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(file, body);
+  writeFileSync(file + '.type', type);
+  return send(200, { Key: `${bucket}/${path}` });
+}
 
 async function storageHandle(req, res, url, ctx) {
   const send = (status, body) => { res.writeHead(status, { 'content-type': 'application/json' }); res.end(JSON.stringify(body)); };
-  const parts = url.pathname.replace('/storage/v1/object/', '').split('/');
+  const parts = url.pathname.replace('/storage/v1/object/', '').split('/').map(decodeURIComponent);
+  if (req.method === 'POST' && parts[0] === 'upload' && parts[1] === 'sign') {
+    const bucket = parts[2];
+    const path = parts.slice(3).join('/');
+    if (!BUCKETS.has(bucket)) return send(400, { message: 'Bucket not found' });
+    if (!safePath(path)) return send(400, { message: 'Invalid key' });
+    const token = signJwt({ url: `${bucket}/${path}`, upload: true, exp: Math.floor(Date.now() / 1000) + 7200 }, ctx.jwtSecret);
+    return send(200, { url: `/object/upload/sign/${bucket}/${path}?token=${token}`, token });
+  }
+  if (req.method === 'POST' && parts[0] === 'sign' && parts.length > 2) {
+    const bucket = parts[1];
+    const path = parts.slice(2).join('/');
+    const body = JSON.parse((await readAll(req)).toString() || '{}');
+    if (!BUCKETS.has(bucket)) return send(400, { message: 'Bucket not found' });
+    if (!safePath(path) || !existsSync(join(ctx.store, bucket, path))) return send(400, { statusCode: '404', error: 'not_found', message: 'Object not found' });
+    const token = signJwt({ url: `${bucket}/${path}`, exp: Math.floor(Date.now() / 1000) + Number(body.expiresIn || 60) }, ctx.jwtSecret);
+    return send(200, { signedURL: `/object/sign/${bucket}/${path}?token=${token}` });
+  }
   if (req.method === 'POST' && parts[0] === 'sign') {
     const bucket = parts[1];
     const body = JSON.parse((await readAll(req)).toString() || '{}');
@@ -229,20 +280,19 @@ async function storageHandle(req, res, url, ctx) {
       return { path, signedURL: `/object/sign/${bucket}/${path}?token=${token}`, error: null };
     }));
   }
+  if (req.method === 'GET' && parts[0] === 'authenticated') {
+    const bucket = parts[1];
+    const path = parts.slice(2).join('/');
+    const file = join(ctx.store, bucket || '', path);
+    if (!BUCKETS.has(bucket) || !safePath(path) || !existsSync(file)) return send(400, { statusCode: '404', error: 'not_found', message: 'Object not found' });
+    res.writeHead(200, { 'content-type': readFileSync(file + '.type', 'utf8') });
+    res.end(readFileSync(file));
+    return;
+  }
   const bucket = parts[0];
   const path = parts.slice(1).join('/');
   if (!BUCKETS.has(bucket)) return send(400, { message: 'Bucket not found' });
-  if (req.method === 'POST' || req.method === 'PUT') {
-    if (!safePath(path)) return send(400, { message: 'Invalid key' });
-    const file = join(ctx.store, bucket, path);
-    const upsert = String(req.headers['x-upsert'] || 'false') === 'true';
-    if (existsSync(file) && !upsert) return send(400, { statusCode: '409', error: 'Duplicate', message: 'The resource already exists' });
-    const body = await readAll(req);
-    mkdirSync(dirname(file), { recursive: true });
-    writeFileSync(file, body);
-    writeFileSync(file + '.type', String(req.headers['content-type'] || 'application/octet-stream'));
-    return send(200, { Key: `${bucket}/${path}` });
-  }
+  if (req.method === 'POST' || req.method === 'PUT') return storePut(req, ctx, bucket, path, send);
   if (req.method === 'DELETE') {
     const body = JSON.parse((await readAll(req)).toString() || '{}');
     for (const p of body.prefixes || []) if (safePath(p)) { rmSync(join(ctx.store, bucket, p), { force: true }); rmSync(join(ctx.store, bucket, p + '.type'), { force: true }); }
@@ -251,21 +301,39 @@ async function storageHandle(req, res, url, ctx) {
   return send(405, { message: 'method' });
 }
 
+/** The claims of a storage token this gateway signed, or null. */
+function tokenClaims(token, ctx) {
+  const [h, b, s] = String(token || '').split('.');
+  if (!h || !b || !s || !same(s, b64url(createHmac('sha256', ctx.jwtSecret).update(`${h}.${b}`).digest()))) return null;
+  try {
+    const claims = JSON.parse(Buffer.from(b, 'base64url').toString());
+    return claims.exp >= Date.now() / 1000 ? claims : null;
+  } catch { return null; }
+}
+
 function storageSignedGet(url, res, ctx) {
   const key = decodeURIComponent(url.pathname.replace('/storage/v1/object/sign/', ''));
-  const token = url.searchParams.get('token') || '';
-  const [h, b, s] = token.split('.');
-  const good = h && b && s && same(s, b64url(createHmac('sha256', ctx.jwtSecret).update(`${h}.${b}`).digest()));
-  let claims = {};
-  try { claims = JSON.parse(Buffer.from(b || '', 'base64url').toString()); } catch { /* refused below */ }
+  const claims = tokenClaims(url.searchParams.get('token'), ctx);
   const [bucket, ...rest] = key.split('/');
   const file = join(ctx.store, bucket, rest.join('/'));
-  if (!good || claims.url !== key || claims.exp < Date.now() / 1000 || !safePath(rest.join('/')) || !existsSync(file)) {
-    res.writeHead(400, { 'content-type': 'application/json' });
+  if (!claims || claims.upload || claims.url !== key || !safePath(rest.join('/')) || !existsSync(file)) {
+    res.writeHead(400, { 'content-type': 'application/json', ...CORS });
     res.end(JSON.stringify({ statusCode: '400', error: 'InvalidJWT', message: 'invalid signature' }));
     return;
   }
   const type = existsSync(file + '.type') ? readFileSync(file + '.type', 'utf8') : 'application/octet-stream';
-  res.writeHead(200, { 'content-type': type, 'cache-control': 'max-age=3600' });
+  const headers = { 'content-type': type, 'cache-control': 'max-age=3600', ...CORS };
+  const name = url.searchParams.get('download');
+  if (name !== null) headers['content-disposition'] = `attachment; filename="${(name || rest[rest.length - 1]).replace(/["\\\r\n]/g, '')}"`;
+  res.writeHead(200, headers);
   res.end(readFileSync(file));
+}
+
+function storageSignedPut(req, url, res, ctx) {
+  const send = (status, body) => { res.writeHead(status, { 'content-type': 'application/json', ...CORS }); res.end(JSON.stringify(body)); };
+  const key = decodeURIComponent(url.pathname.replace('/storage/v1/object/upload/sign/', ''));
+  const claims = tokenClaims(url.searchParams.get('token'), ctx);
+  const [bucket, ...rest] = key.split('/');
+  if (!claims || !claims.upload || claims.url !== key || !BUCKETS.has(bucket)) return send(400, { statusCode: '400', error: 'InvalidJWT', message: 'invalid signature' });
+  return storePut(req, ctx, bucket, rest.join('/'), send);
 }

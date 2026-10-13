@@ -29,7 +29,7 @@ const SCHEMA = resolve(ROOT, 'supabase/schema.sql');
 
 export const TABLES = ['texc_users', 'texc_login_tokens', 'texc_user_sessions', 'texc_proposals', 'texc_proposal_revisions',
   'texc_revision_keys', 'texc_drafts', 'texc_events', 'texc_proposal_views', 'texc_settings', 'texc_counters',
-  'texc_rate_limits', 'texc_staff_audit'];
+  'texc_rate_limits', 'texc_staff_audit', 'texc_attachments'];
 const RPCS = {
   texc_rate_hit: { p_key: 'x', p_max: 1, p_window_seconds: 60 },
   texc_claim_reference: { p_proposal: '00000000-0000-0000-0000-000000000000', p_prefix: 'X' },

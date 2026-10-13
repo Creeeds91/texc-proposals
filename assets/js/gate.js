@@ -167,11 +167,22 @@ async function boot() {
   D.addEventListener('proposal:option', (e) => { post('/api/event', { event: 'option_toggled', meta: e.detail }).catch(() => {}); });
   window.addEventListener('beforeprint', () => { post('/api/event', { event: 'printed' }, true).catch(() => {}); });
   // Photograph links last an hour; refresh them before printing if they are close to expiry.
-  setHooks({ issued: true, beforePrint: async () => {
-    if (!state.cfg || !state.cfg.media || Date.now() - state.mediaAt < 45 * 60000) return;
-    const m = await signedMedia();
-    if (m) { state.media = m; applyConfig(withMedia(state.cfg, m)); }
-  } });
+  setHooks({
+    issued: true,
+    beforePrint: async () => {
+      if (!state.cfg || !state.cfg.media || Date.now() - state.mediaAt < 45 * 60000) return;
+      const m = await signedMedia();
+      if (m) { state.media = m; applyConfig(withMedia(state.cfg, m)); }
+    },
+    // A document: a fresh 60-second link for each open or download (the server records which).
+    attachment: async (id, { download = false } = {}) => {
+      const r = await post('/api/attachment', { id, download });
+      if (r.ok) return r.json();
+      const userMessage = r.status === 429 ? 'Too many requests just now. Wait a minute and try again.'
+        : r.status === 410 ? 'This document is no longer available from this link.' : 'The document could not be fetched. Try again.';
+      throw Object.assign(new Error(String(r.status)), { userMessage });
+    },
+  });
 }
 
 window.proposalFingerprint = () => state.plaintextSha256;
