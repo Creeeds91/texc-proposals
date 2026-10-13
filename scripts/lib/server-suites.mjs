@@ -1041,6 +1041,13 @@ export async function suiteDashboard() {
   await anon.call('POST', '/api/auth?action=code', { email: editorEmail });
   await staff.call('POST', '/api/people', { email: viewerEmail, status: 'active', role: 'viewer' });
   await staff.call('POST', '/api/people', { email: editorEmail, status: 'active', role: 'editor' });
+  // Its own administrator: in a full run the shared check account has already
+  // spent the real per-person publishing and creating limits.
+  const adminEmail = `dash-admin-${tag}@example.com`;
+  await anon.call('POST', '/api/auth?action=code', { email: adminEmail });
+  await staff.call('POST', '/api/people', { email: adminEmail, status: 'active', role: 'admin' });
+  const admin = client(a);
+  await admin.signIn(adminEmail);
   const viewer = client(a);
   await viewer.signIn(viewerEmail);
   const editor = client(a);
@@ -1054,7 +1061,7 @@ export async function suiteDashboard() {
   const leaked = rows.flatMap((r) => ['access_token', 'passphrase_enc', 'published_text', 'enc', 'slug', 'search'].filter((k) => k in r));
   expect(vData.status === 200 && rows.length >= seeded.count && !leaked.length, `the dashboard data: ${vData.status}, ${rows.length} rows, leaked ${[...new Set(leaked)].join(' ')}`);
   const vDetail = await viewer.call('GET', `/api/analytics?id=${seeded.ids.latrobe}`);
-  const sDetail = await staff.call('GET', `/api/analytics?id=${seeded.ids.latrobe}`);
+  const sDetail = await admin.call('GET', `/api/analytics?id=${seeded.ids.latrobe}`);
   expect(vDetail.status === 200 && vDetail.json.proposal.url === null && sDetail.json.proposal.url && vDetail.json.views.length === 4
     && vDetail.json.events.some((e) => e.event === 'changes_requested' && /eastern batter/.test(e.meta.message)), 'one proposal\'s history: a viewer sees it all except the client link');
   const vExport = await viewer.call('GET', '/api/export');
@@ -1080,13 +1087,13 @@ export async function suiteDashboard() {
     `export: ${csv.status} ${csv.headers.get('content-type')} ${csv.headers.get('content-disposition')}, audited ${audits() - before}`);
   const crossSite = await editor.call('GET', '/api/export', undefined, { origin: 'https://evil.example', 'sec-fetch-site': 'cross-site' });
   expect(crossSite.status === 403 && audits() === before + 1, `an export asked for by another site answered ${crossSite.status}`);
-  const hostile = await staff.call('POST', '/api/proposals', { action: 'create', config: { meta: { project: `Formula check ${tag}` }, client: { company: '=HYPERLINK("http://evil.example","Open")' } } });
-  const draftCsv = await staff.call('GET', `/api/export?state=draft&q=${encodeURIComponent(`formula check ${tag}`)}`);
+  const hostile = await admin.call('POST', '/api/proposals', { action: 'create', config: { meta: { project: `Formula check ${tag}` }, client: { company: '=HYPERLINK("http://evil.example","Open")' } } });
+  const draftCsv = await admin.call('GET', `/api/export?state=draft&q=${encodeURIComponent(`formula check ${tag}`)}`);
   expect(hostile.status === 200 && /"'=HYPERLINK\(""http:\/\/evil\.example"",""Open""\)"/.test(draftCsv.text) && draftCsv.text.split('\r\n').length === 3,
     `a formula-shaped client name was not defused in the export: ${draftCsv.text.split('\r\n')[1]}`);
 
   // 4. Archive and restore, end to end, on a live proposal.
-  const live = await demoProposal(staff);
+  const live = await demoProposal(admin);
   const open = () => client(a).call('GET', `/api/proposal?slug=${live.slug}&t=${live.t}`);
   expect((await open()).status === 200, 'the live proposal did not open before archiving');
   const noWhy = await editor.call('POST', '/api/proposals', { action: 'archive', id: live.id, reason: '' });
@@ -1094,7 +1101,7 @@ export async function suiteDashboard() {
   const whileArchived = await open();
   const draft = await editor.call('GET', `/api/drafts?id=${live.id}`);
   const save = await editor.call('PUT', '/api/drafts', { id: live.id, version: draft.json.version, config: draft.json.config });
-  const pub = await staff.call('POST', '/api/proposals', { action: 'publish', id: live.id, version: draft.json.version });
+  const pub = await admin.call('POST', '/api/proposals', { action: 'publish', id: live.id, version: draft.json.version });
   const listed = ((await editor.call('GET', '/api/proposals')).json.proposals || []).some((p) => p.id === live.id);
   const archRow = ((await editor.call('GET', '/api/analytics')).json.rows || []).find((r) => r.id === live.id);
   expect(noWhy.status === 400 && arch.status === 200 && arch.json.changed === true, `archiving: without a reason ${noWhy.status}, with one ${arch.status}`);
@@ -1110,16 +1117,16 @@ export async function suiteDashboard() {
     `restoring: ${restored.status}, again changed=${again.json && again.json.changed}, link ${afterRestore.status}, events ${trail}, audit ${audited}`);
 
   // 5. Practice proposals leave every figure; drafts keep their listing current.
-  const practice = await staff.call('POST', '/api/proposals', { action: 'practice', id: seeded.ids.ridgeway, on: true });
-  const rows2 = (await staff.call('GET', '/api/analytics')).json.rows;
+  const practice = await admin.call('POST', '/api/proposals', { action: 'practice', id: seeded.ids.ridgeway, on: true });
+  const rows2 = (await admin.call('GET', '/api/analytics')).json.rows;
   const afterFig = LC.figures(rows2, 'all', new Date());
   const beforeFig = LC.figures(rows2.map((r) => (r.id === seeded.ids.ridgeway ? { ...r, is_test: false } : r)), 'all', new Date());
   expect(practice.status === 200 && afterFig.issued === beforeFig.issued - 1 && afterFig.accepted === beforeFig.accepted - 1
     && q(`select count(*) from public.texc_events where proposal_id = '${seeded.ids.ridgeway}' and event = 'marked_practice'`) === '1', `practice: ${practice.status}, issued ${beforeFig.issued}→${afterFig.issued}`);
-  await staff.call('POST', '/api/proposals', { action: 'practice', id: seeded.ids.ridgeway, on: false });
-  const fresh = await staff.call('POST', '/api/proposals', { action: 'create', config: { meta: { project: `Listing check ${tag}` } } });
-  const fd = await staff.call('GET', `/api/drafts?id=${fresh.json.id}`);
-  await staff.call('PUT', '/api/drafts', { id: fresh.json.id, version: fd.json.version, config: { ...fd.json.config, client: { company: `Ridgeline Listing ${tag} Pty Ltd`, contactName: 'Morgan Ashby' }, meta: { project: `Listing check ${tag}`, siteLocality: 'Scottsdale', siteRegion: 'Northern Tasmania' } } });
+  await admin.call('POST', '/api/proposals', { action: 'practice', id: seeded.ids.ridgeway, on: false });
+  const fresh = await admin.call('POST', '/api/proposals', { action: 'create', config: { meta: { project: `Listing check ${tag}` } } });
+  const fd = await admin.call('GET', `/api/drafts?id=${fresh.json.id}`);
+  await admin.call('PUT', '/api/drafts', { id: fresh.json.id, version: fd.json.version, config: { ...fd.json.config, client: { company: `Ridgeline Listing ${tag} Pty Ltd`, contactName: 'Morgan Ashby' }, meta: { project: `Listing check ${tag}`, siteLocality: 'Scottsdale', siteRegion: 'Northern Tasmania' } } });
   const listing = q(`select client_company || '|' || site_locality from public.texc_proposals where id = '${fresh.json.id}'`);
   expect(listing === `Ridgeline Listing ${tag} Pty Ltd|Scottsdale` && (await find(`morgan ridgeline ${tag}`)).includes(fresh.json.id), `a draft's listing after a save: ${listing}`);
 
@@ -1173,7 +1180,7 @@ export async function suiteDashboard() {
     expect(flagged.length >= 3 && flagged.every(Boolean), `"Needs a follow-up" listed ${flagged.length} rows, some without a reason`);
     await p.selectOption('#f-state', '');
     // Archive and restore through the page.
-    const other = await demoProposal(staff);
+    const other = await demoProposal(admin);
     await p.goto(`${a.url}/dashboard?open=${other.id}`);
     await p.waitForSelector('#db-archive');
     await p.click('#db-archive');
