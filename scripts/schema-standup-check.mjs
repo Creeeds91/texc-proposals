@@ -10,7 +10,8 @@
  *   - drives the publish, rotate, withdraw and view functions as the server
  *     does, including the races (a stale revision number, a changed passphrase);
  *   - tries to change, delete and truncate a published revision and the
- *     append-only logs, and expects every attempt refused.
+ *     append-only logs, and expects every attempt refused;
+ *   - searches, reads the dashboard overview, archives and restores.
  *
  *   node scripts/schema-standup-check.mjs        a fresh local stack, deleted afterwards
  *
@@ -35,6 +36,7 @@ const RPCS = {
   texc_claim_reference: { p_proposal: '00000000-0000-0000-0000-000000000000', p_prefix: 'X' },
   texc_publish: { p: {} }, texc_rotate: { p: {} }, texc_withdraw: { p_proposal: '00000000-0000-0000-0000-000000000000', p_actor: 'x', p_note: '' },
   texc_record_view: { p: {} }, texc_accept: { p: {} },
+  texc_set_archived: { p: {} }, texc_search: { p_q: 'x' }, texc_overview: { p: {} },
 };
 
 const hex = (n) => randomBytes(n).toString('hex');
@@ -140,7 +142,7 @@ export async function runSchemaProof({ log = () => {} } = {}) {
       enc: JSON.stringify({ v: 1, ct: hex(16) }), enc_sha256: sha('e' + index), published_text: '{"p":' + index + '}', plaintext_sha256: sha('p' + index),
       view_token_hash: sha('vt' + index), template_version: 1, quote_snapshot: { lines: [] }, published_by: 'proof@example.com',
       access_token: token, passphrase_enc: pass, link_expires_at: '2099-01-01T00:00:00Z', valid_until: '2099-01-01', value_cents: 100,
-      project: 'Proof', services: ['microblasting'],
+      project: 'Proof', services: ['microblasting'], search_extra: 'Microblasting Dana Whitfield',
       key: { kdf: 'PBKDF2-SHA256', iter: 600000, salt: hex(16), iv: hex(12), wrapped: hex(40) },
       ...extra,
     });
@@ -225,6 +227,39 @@ export async function runSchemaProof({ log = () => {} } = {}) {
     ok('an acceptance cannot be changed or deleted', !accEdit.ok && !accDel.ok, [accEdit.status, accDel.status]);
     const staffNoNote = await rpc('texc_accept', { p: acc(revs.json[1].id, { kind: 'staff', recorded_by: 'proof', staff_note: '' }) });
     ok('a second acceptance of the same revision, even by staff, gets the first one back', staffNoNote.ok && staffNoNote.json.won === false, staffNoNote.text);
+
+    log('Search, the dashboard overview, archive and restore');
+    const found = async (text) => { const r = await rpc('texc_search', { p_q: text }); return r.ok ? r.json : r.text; };
+    ok('search finds a proposal by a prefix of any word, in any order', (await found('whit micro')).includes(pid) && (await found('Dana')).includes(pid), [await found('whit micro')]);
+    ok('every word must match', !(await found('micro zzzz')).includes(pid));
+    ok('a reference matches on any part of it', (await found(ref1.json.slice(5, 12).toLowerCase())).includes(pid), await found(ref1.json.slice(5, 12)));
+    const hostile = await found("a:* & !b | (c <-> d) ' ; drop table x --");
+    ok('query operators and quotes typed into search are only ever words', Array.isArray(hostile), hostile);
+    ok('an empty search finds nothing, rather than everything', JSON.stringify(await found('  -- ')) === '[]');
+    const genWrite = await rest('PATCH', `texc_proposals?id=eq.${pid}`, { search: 'x' });
+    ok('the search column is generated and cannot be written', !genWrite.ok, genWrite.status);
+    const ov = await rpc('texc_overview', { p: {} });
+    const row = ov.ok && Array.isArray(ov.json) ? ov.json.find((x) => x.id === pid) : null;
+    ok('the overview reports the current revision, its acceptance and how it was read', row && row.rev === 'B' && row.revisions === 2 && row.current_accepted_kind === 'client'
+      && row.first_accepted_at && row.last_accepted_rev === 'B' && row.views_current === 2 && row.sessions_current === 2 && row.docs_opened_current === 0, row || ov.text);
+    const noWhy = await rpc('texc_set_archived', { p: { proposal_id: pid, archive: true, actor: 'proof', reason: '' } });
+    ok('archiving needs a reason', !noWhy.ok, noWhy.text);
+    const arch = await rpc('texc_set_archived', { p: { proposal_id: pid, archive: true, actor: 'proof', reason: 'Client did not proceed' } });
+    const archAgain = await rpc('texc_set_archived', { p: { proposal_id: pid, archive: true, actor: 'proof', reason: 'Again' } });
+    const archEvents = () => q(`select string_agg(event, ',' order by id) from public.texc_events where proposal_id = '${pid}' and event in ('archived', 'restored')`);
+    ok('archiving is recorded once; archiving it again changes nothing', arch.ok && arch.json.changed === true && archAgain.ok && archAgain.json.changed === false && archEvents() === 'archived', [arch.text, archAgain.text, archEvents()]);
+    const archState = await rest('GET', `texc_proposals?id=eq.${pid}&select=status,archived_at,archived_by,archive_reason`);
+    ok('archiving is not withdrawing: the status stays as it was', archState.json[0].status === 'issued' && archState.json[0].archived_at && archState.json[0].archive_reason === 'Client did not proceed', archState.json);
+    const pubArchived = await rpc('texc_publish', { p: revision(3) });
+    ok('nothing can be published on an archived proposal', !pubArchived.ok && /archived/.test(pubArchived.text), pubArchived.text);
+    const accArchived = await rpc('texc_accept', { p: acc(revs.json[1].id) });
+    ok('nothing can be accepted on an archived proposal', !accArchived.ok && /archived/.test(accArchived.text), accArchived.text);
+    const active = await rpc('texc_overview', { p: { archived: false } });
+    const all = await rpc('texc_overview', { p: {} });
+    ok('the overview leaves archived proposals out when asked', active.ok && !active.json.some((x) => x.id === pid) && all.json.some((x) => x.id === pid && x.archived_at));
+    const restored = await rpc('texc_set_archived', { p: { proposal_id: pid, archive: false, actor: 'proof' } });
+    const back = await rest('GET', `texc_proposals?id=eq.${pid}&select=archived_at,archive_reason`);
+    ok('restoring brings it back and is recorded', restored.ok && restored.json.changed === true && !back.json[0].archived_at && !back.json[0].archive_reason && archEvents() === 'archived,restored', [restored.text, back.json, archEvents()]);
 
     const wd = await rpc('texc_withdraw', { p_proposal: pid, p_actor: 'proof', p_note: 'sent in error' });
     const wrev = await rest('GET', `texc_proposal_revisions?id=eq.${revs.json[1].id}&select=withdrawn_at`);

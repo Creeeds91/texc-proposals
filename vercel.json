@@ -21,6 +21,10 @@
       "destination": "/api/signin"
     },
     {
+      "source": "/dashboard",
+      "destination": "/api/dashboard"
+    },
+    {
       "source": "/editor",
       "destination": "/api/editor"
     },

@@ -24,7 +24,7 @@ export default async function handler(req, res) {
   if (onlyMethods(req, res, ['GET'])) return;
   const d = db();
   const id = String((req.query || {}).id || '');
-  const who = await requireRole(req, res, d, 'viewer', { page: true, next: UUID_RE.test(id) ? `/staff/acceptance/${id}` : '/editor' });
+  const who = await requireRole(req, res, d, 'viewer', { page: true, next: UUID_RE.test(id) ? `/staff/acceptance/${id}` : '/dashboard' });
   if (!who) return;
   if (!UUID_RE.test(id)) { plain(res, 404, 'No such acceptance record.'); return; }
   const row = await acceptanceById(d, id);

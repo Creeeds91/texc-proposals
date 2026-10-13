@@ -829,3 +829,94 @@ points HP2 to HP5 are met" when it has HP1 to HP5), not a fixed range.
 signing by more than one person; an acceptance by a client on a revision that
 has expired its valid-until date but not its link (the link expiry governs,
 as for reading).
+
+## 17. Phase 6 as built (13 Oct 2026)
+
+Where the build refines §7 (lifecycle, follow-ups, win rate) and §9 row 6.
+
+**The dashboard** (`/dashboard`, any staff role) is where signing in now
+lands. It is a page built like the sign-in page (`templates/dashboard.html`
+→ `lib/dashboard-html.js`, served by `api/dashboard.js` behind a session,
+under the client page's strict CSP) and reads everything from
+`/api/analytics`. In order:
+
+- **Figures** for a period (last 30 days, this quarter, this financial year —
+  the default, 1 July to 30 June — last 12 months, all time): issued,
+  accepted, win rate, accepted value, and the open pipeline. Each is for the
+  proposals *first issued* in the period, so the win rate compares like with
+  like; it leaves out withdrawn proposals. Values are ex GST and count priced
+  items only. The open pipeline is always "as of today". Practice proposals
+  never count anywhere.
+- **Issued and accepted, last 12 months**: grouped bars by Hobart month (a
+  proposal counts in the month it was first issued, and in the month it was
+  first accepted). Steel for issued, the documents' gold for accepted —
+  validated with the dataviz palette checks on the white card (contrast,
+  every colour-vision type, normal vision). Every month can be focused or
+  hovered for its figures; a legend, the latest month labelled, and a
+  "Show as a table" twin with the same numbers.
+- **Needs a follow-up**, most pressing first: changes requested; revised
+  after acceptance and not yet accepted again; valid-until within 7 days;
+  not opened 5 or more days after it was sent; opened, then quiet for 3 or
+  more days. The thresholds are in `assets/js/lifecycle.js` (`FOLLOW_UP`).
+- **Every proposal**, searchable and filterable (state, region, service),
+  ordered by latest activity, first issued, valid-until or value. Filters live
+  in the address, so a reload or a shared link shows the same list. On a phone
+  the table becomes one card per proposal.
+- **One proposal's history** in a side panel: its state and follow-ups, the
+  facts, acceptances (with their records), revisions, and every event and
+  open in order — published, emailed, opened (device, region), documents
+  opened, items ticked, changes asked for (with the message), accepted,
+  archived, restored.
+
+**One set of rules.** States, follow-ups, periods, figures and the list
+filters are pure functions in `assets/js/lifecycle.js`, shared by the page
+and the CSV export (as `checks.js` and `money.js` are), so the file says what
+the screen said. The database does only the counting: `texc_overview()`
+returns one row per proposal with its current revision, acceptance on that
+revision and ever, opens, sessions, documents opened and items ticked on the
+current revision, and when changes were last asked for.
+
+**States**, first match wins: archived, withdrawn, draft, accepted (the
+current revision), expired (link expiry or valid-until passed), changes
+requested, engaged (a document opened, an item ticked, or three or more
+visits), opened, issued. Everything after draft is about the current
+revision: a client who read revision A has not yet opened revision B.
+
+**Search** (`texc_search()`): every word is a prefix and all must match, over
+the reference, project, client, locality, region and `search_extra` (document
+type, service names, contact, document titles), through a generated `search`
+column with a GIN index. A reference also matches on any part of it. Only
+letters and digits reach the query. `search_extra` and the listing columns
+are written at publish (from what was sent) and on every save while a
+proposal has never been issued.
+
+**Archive and restore** (editor and above, from the dashboard or the editor's
+menu; `texc_set_archived()`): archiving needs a reason and files the proposal
+away with its whole history. It is **not** a withdrawal — the status stays as
+it was. While archived, the client's link refuses with the same 410 as any
+dead link, nothing can be saved, published or accepted on it, and it leaves
+the editor's list (the editor opened on one offers Restore). Restoring brings
+all of that back, a link still within its expiry included. Both are events
+and staff-audit entries. Deleting is not here: the super-only purge is
+Phase 7.
+
+**Practice proposals** (administrators): "Mark as practice" leaves a proposal
+out of every figure and follow-up; it stays in the list, tagged. Recorded as
+an event and in the audit.
+
+**CSV export** (editor and above, `/api/export`): the list exactly as
+filtered, one row per proposal with its state, follow-up, dates, values,
+opens and acceptance. Every cell is quoted, and one starting `=`, `+`, `-`,
+`@`, a tab or a return gets a leading apostrophe, so a client name can never
+run as a spreadsheet formula. UTF-8 with a byte-order mark for Excel.
+Same-site only, and every export is written to the staff audit with its
+filters and row count before the file is sent.
+
+**Who sees what.** Viewers see the whole dashboard and every history, but not
+the client link, and cannot export, archive or mark practice. The data the
+page receives carries no link token, passphrase or proposal content beyond
+the contact's name.
+
+**Not built:** the purge (Phase 7); saved views; an emailed digest of
+follow-ups; charts of value over time (the figures give the totals); a
+"lost" outcome separate from the archive reason.

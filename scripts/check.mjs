@@ -48,7 +48,9 @@ import { runChecks } from '../assets/js/checks.js';
 import { scanText, localityWarning } from '../assets/js/sensitive.js';
 import { inspectPdf } from '../lib/pdf-inspect.js';
 import { FIXTURES as PDF_FIXTURES } from './lib/pdf-fixtures.mjs';
-import { suiteSchema, suiteEnvelope, suiteRefusals, suiteAcceptance, suiteEditor, suiteFlow, closeServerSuites } from './lib/server-suites.mjs';
+import { suiteSchema, suiteEnvelope, suiteRefusals, suiteAcceptance, suiteEditor, suiteFlow, suiteDashboard, closeServerSuites } from './lib/server-suites.mjs';
+import * as LC from '../assets/js/lifecycle.js';
+import { toCsv, cell, COLUMNS as CSV_COLUMNS } from '../lib/report.js';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (p) => readFileSync(resolve(ROOT, p), 'utf8');
@@ -144,7 +146,7 @@ const BRAND_PATTERNS = [/TEXC/, /0467\s?651\s?182/, /47\s?688\s?368\s?881/, /man
 
 function suiteBrand() {
   const files = [
-    ...walk('api', ['.js']), ...walk('lib', ['.js']).filter((f) => !['lib/brand.js', 'lib/editor-html.js', 'lib/signin-html.js', 'lib/template-data.js', 'lib/demo-fixture.js'].includes(f)),
+    ...walk('api', ['.js']), ...walk('lib', ['.js']).filter((f) => !['lib/brand.js', 'lib/editor-html.js', 'lib/signin-html.js', 'lib/dashboard-html.js', 'lib/template-data.js', 'lib/demo-fixture.js'].includes(f)),
     ...walk('assets/js', ['.js']), ...walk('scripts', ['.mjs', '.js']).filter((f) => f !== 'scripts/check.mjs'),
     ...walk('templates', ['.html']),
   ];
@@ -170,7 +172,7 @@ function suiteCsp() {
   let views;
   try { views = build({ write: false }); }
   catch (e) { return { status: FAIL, detail: [e.message] }; }
-  const HTML_MODULES = new Set(['lib/editor-html.js', 'lib/signin-html.js']);
+  const HTML_MODULES = new Set(['lib/editor-html.js', 'lib/signin-html.js', 'lib/dashboard-html.js']);
   for (const [name, body] of Object.entries(views)) {
     const isEditor = name === 'lib/editor-html.js';
     // Pages served by functions are string modules; check the page inside them.
@@ -304,6 +306,94 @@ function suiteDesign() {
 }
 
 /* ---------------------------------------------------------------- rules */
+
+/**
+ * The dashboard's rules (assets/js/lifecycle.js) and its CSV (lib/report.js),
+ * on hand-made rows: state precedence, follow-ups, Hobart calendar periods
+ * and months, the period figures, the list filters, and formula-safe cells.
+ */
+function suiteLifecycle() {
+  const fails = [];
+  const expect = (cond, what) => { if (!cond) fails.push(what); };
+  const now = new Date('2026-10-13T02:00:00Z'); // 1 pm on 13 Oct 2026 in Hobart
+  const ago = (days) => new Date(now.getTime() - days * 86400000).toISOString();
+  const base = { id: 'p', status: 'issued', rev: 'A', issued_at: ago(12), rev_published_at: ago(12), valid_until: '2026-10-31', link_expires_at: '2026-11-30T13:59:59Z',
+    views_current: 1, sessions_current: 1, last_view_current: ago(1), docs_opened_current: 0, options_current: 0, value_cents: 100000, services: ['civil-construction'], site_region: 'Northern Tasmania', updated_at: ago(1) };
+  const row = (x = {}) => ({ ...base, ...x });
+
+  // 1. One state, by precedence.
+  const states = [
+    [{ views_current: 0, sessions_current: 0 }, 'issued'], [{}, 'opened'], [{ views_current: 3, sessions_current: 3 }, 'engaged'],
+    [{ docs_opened_current: 1 }, 'engaged'], [{ options_current: 2 }, 'engaged'],
+    [{ changes_requested_at: ago(1), docs_opened_current: 1 }, 'changes'], [{ valid_until: '2026-10-12', changes_requested_at: ago(1) }, 'expired'],
+    [{ valid_until: '2026-10-13' }, 'opened'], [{ link_expires_at: ago(0.01) }, 'expired'], [{ current_accepted_at: ago(2), valid_until: '2026-01-01' }, 'accepted'],
+    [{ status: 'draft', rev: null }, 'draft'], [{ status: 'withdrawn', current_accepted_at: ago(2) }, 'withdrawn'], [{ archived_at: ago(1), status: 'withdrawn' }, 'archived'],
+  ];
+  for (const [x, want] of states) { const got = LC.stateOf(row(x), now); expect(got === want, `state of ${JSON.stringify(x)} was ${got}, not ${want}`); }
+
+  // 2. Follow-ups: who needs a call, and why, most pressing first.
+  const kinds = (x) => LC.followUps(row(x), now).map((f) => f.kind).join(',');
+  const unopened = { views_current: 0, sessions_current: 0, last_view_current: null };
+  expect(kinds({ ...unopened, rev_published_at: ago(6) }) === 'unopened' && kinds({ ...unopened, rev_published_at: ago(4) }) === '', `unopened 5+ days: ${kinds({ ...unopened, rev_published_at: ago(6) })} / ${kinds({ ...unopened, rev_published_at: ago(4) })}`);
+  expect(kinds({ last_view_current: ago(4) }) === 'quiet' && kinds({ last_view_current: ago(2) }) === '', 'quiet 3+ days after opening');
+  expect(kinds({ valid_until: '2026-10-16' }) === 'expiring' && LC.followUps(row({ valid_until: '2026-10-16' }), now)[0].text === 'Valid for 3 more days', 'valid until within 7 days');
+  expect(LC.followUps(row({ valid_until: '2026-10-13' }), now)[0].text === 'Valid until today' && kinds({ valid_until: '2026-10-25' }) === '', 'valid until today, and not when it is weeks away');
+  expect(kinds({ changes_requested_at: ago(1), valid_until: '2026-10-15', rev_published_at: ago(9) }).startsWith('changes,expiring'), 'a request for changes comes first');
+  expect(kinds({ last_accepted_rev: 'A', rev: 'B' }) === 'reaccept', `revised after acceptance: ${kinds({ last_accepted_rev: 'A', rev: 'B' })}`);
+  expect(kinds({ ...unopened, is_test: true, rev_published_at: ago(9) }) === '' && kinds({ current_accepted_at: ago(1), valid_until: '2026-10-14' }) === '', 'practice and accepted proposals never ask for a call');
+
+  // 3. Periods are Hobart calendar periods; the financial year starts 1 July.
+  const starts = Object.fromEntries(Object.keys(LC.PERIODS).map((k) => [k, LC.periodStart(k, now)]));
+  expect(JSON.stringify(starts) === JSON.stringify({ '30d': '2026-09-14', quarter: '2026-10-01', fy: '2026-07-01', '12m': '2025-11-01', all: '' }), `period starts ${JSON.stringify(starts)}`);
+  expect(LC.hobartDate('2026-06-30T14:30:00Z') === '2026-07-01' && LC.periodStart('fy', new Date('2026-06-30T14:30:00Z')) === '2026-07-01'
+    && LC.periodStart('fy', new Date('2026-06-30T13:30:00Z')) === '2025-07-01', 'the financial year turns at midnight in Hobart, not in UTC');
+  expect(LC.periodStart('12m', new Date('2026-01-15T02:00:00Z')) === '2025-02-01', 'last 12 months across a new year');
+
+  // 4. Figures for a cohort issued in the period.
+  const cohort = [
+    row({ id: 'a', issued_at: '2026-08-01T00:00:00Z', first_accepted_at: '2026-08-05T00:00:00Z', last_accepted_subtotal_cents: 500000, current_accepted_at: '2026-08-05T00:00:00Z' }),
+    row({ id: 'b', issued_at: '2026-08-02T00:00:00Z', status: 'withdrawn' }),
+    row({ id: 'c', issued_at: '2026-09-01T00:00:00Z', value_cents: 700000 }),
+    row({ id: 'd', issued_at: '2026-09-02T00:00:00Z', is_test: true, first_accepted_at: '2026-09-03T00:00:00Z', last_accepted_subtotal_cents: 999900 }),
+    row({ id: 'e', issued_at: '2026-05-01T00:00:00Z', first_accepted_at: '2026-05-09T00:00:00Z', current_accepted_at: '2026-05-09T00:00:00Z', last_accepted_subtotal_cents: 300000 }),
+    row({ id: 'f', status: 'draft', rev: null, issued_at: null }),
+    row({ id: 'g', issued_at: '2026-09-09T00:00:00Z', archived_at: ago(1), value_cents: 900000 }),
+  ];
+  const fy = LC.figures(cohort, 'fy', now);
+  expect(fy.issued === 4 && fy.withdrawn === 1 && fy.accepted === 1 && fy.winRate === 1 / 3 && fy.acceptedValueCents === 500000, `financial year figures ${JSON.stringify(fy)}`);
+  expect(fy.pipelineCount === 1 && fy.pipelineValueCents === 700000, `open pipeline counts only what is still out, not archived or practice: ${JSON.stringify(fy)}`);
+  const all = LC.figures(cohort, 'all', now);
+  expect(all.issued === 5 && all.accepted === 2 && all.acceptedValueCents === 800000, `all-time figures ${JSON.stringify(all)}`);
+  expect(LC.figures([], 'fy', now).winRate === null, 'no win rate is claimed before anything is issued');
+
+  // 5. Months, in Hobart: a proposal sent at 12:30 am on 1 July counts in July.
+  const months = LC.monthly([row({ issued_at: '2026-06-30T14:30:00Z', first_accepted_at: '2026-10-02T00:00:00Z' }), row({ issued_at: '2025-10-30T00:00:00Z' }), row({ issued_at: '2026-10-01T00:00:00Z', is_test: true })], now);
+  const m = Object.fromEntries(months.map((x) => [x.key, `${x.issued}/${x.accepted}`]));
+  expect(months.length === 12 && months[0].key === '2025-11' && months[11].key === '2026-10' && m['2026-07'] === '1/0' && m['2026-06'] === '0/0' && m['2026-10'] === '0/1',
+    `monthly buckets ${JSON.stringify(m)}`);
+
+  // 6. The list's filters.
+  const list = [row({ id: 'n', site_region: 'Southern Tasmania', services: ['microblasting'] }), row({ id: 'o', archived_at: ago(1) }), row({ id: 'q', ...unopened, rev_published_at: ago(8), value_cents: 900000 }), row({ id: 'r', current_accepted_at: ago(1), value_cents: 50 })];
+  const ids = (f) => LC.listRows(list, { sort: 'activity', ...f }, now).map((x) => x.id).sort().join('');
+  expect(ids({}) === 'nqr' && ids({ state: 'archived' }) === 'o', `archived proposals appear only when asked for: ${ids({})} / ${ids({ state: 'archived' })}`);
+  expect(ids({ state: 'followup' }) === 'q' && ids({ state: 'accepted' }) === 'r', `follow-up and state filters: ${ids({ state: 'followup' })} / ${ids({ state: 'accepted' })}`);
+  expect(ids({ region: 'Southern Tasmania' }) === 'n' && ids({ service: 'microblasting' }) === 'n' && ids({ ids: new Set(['q', 'o']) }) === 'q', 'region, service and search filters');
+  expect(LC.listRows(list, { sort: 'value' }, now).map((x) => x.id).join('') === 'qnr', 'ordered by value');
+
+  // 7. The CSV: every cell quoted, formulas defused, Excel-readable.
+  const csv = toCsv([row({ client_company: '=HYPERLINK("http://example.com","Click")', project: '+SUM(A1)', contact: '-2+3', site_locality: '@cmd', state: 'issued', followUps: [] })], { services: { 'civil-construction': 'Civil Construction' } });
+  const lines = csv.split('\r\n');
+  expect(csv.startsWith('﻿') && lines.length === 3 && lines[2] === '', 'a byte-order mark, CRLF lines and a final newline');
+  expect(lines[0].slice(1).split('","').length === CSV_COLUMNS.length, 'one header per column');
+  for (const bad of ['"\'=HYPERLINK(""http://example.com"",""Click"")"', '"\'+SUM(A1)"', '"\'-2+3"', '"\'@cmd"']) expect(lines[1].includes(bad), `a formula-shaped cell was not defused: ${bad}`);
+  expect(cell(null) === '""' && cell('Ashgrove Civil Pty Ltd') === '"Ashgrove Civil Pty Ltd"' && cell('\tx') === '"\'\tx"', 'ordinary cells are only quoted');
+
+  return fails.length ? { status: FAIL, detail: fails } : { status: PASS, detail: [
+    `${states.length} state cases in precedence order; follow-ups for unopened, quiet, expiring, changes requested and re-acceptance; none for practice or accepted proposals`,
+    'periods and months are Hobart calendar periods (the financial year turns at midnight in Hobart); figures are for the issued cohort, win rate leaves out withdrawn, practice never counts',
+    'list filters keep archived proposals out unless asked; the CSV quotes every cell and defuses =, +, -, @ and tab',
+  ] };
+}
 
 function suiteRules() {
   const fails = [];
@@ -666,7 +756,9 @@ const SUITES = {
   contract: suiteContract, brand: suiteBrand, csp: suiteCsp, conventions: suiteConventions, quote: suiteQuote,
   design: suiteDesign, rules: suiteRules, attachments: suiteAttachments,
   confirm: suiteConfirm, render: suiteRender, print: suitePrint, 'content-sync': suiteContentSync,
+  lifecycle: suiteLifecycle,
   schema: suiteSchema, envelope: () => suiteEnvelope({ browserSession }), refusals: suiteRefusals, acceptance: suiteAcceptance, editor: suiteEditor, flow: suiteFlow,
+  dashboard: suiteDashboard,
 };
 
 const wanted = args.filter((a) => !a.startsWith('--'));

@@ -137,7 +137,7 @@ added later is appended with `alter table … add column`, never tidied into the
   a caller (`check.mjs conventions`). The secret key goes in the `apikey`
   header only.
 - Endpoints never read `content/` or `templates/` at run time; they import the
-  generated `lib/template-data.js`, `lib/editor-html.js`, `lib/signin-html.js`.
+  generated `lib/template-data.js`, `lib/editor-html.js`, `lib/signin-html.js`, `lib/dashboard-html.js`.
 
 ## Attachments (Phase 4)
 
@@ -180,9 +180,30 @@ added later is appended with `alter table … add column`, never tidied into the
 - After any change here run `check.mjs schema acceptance flow` and
   `node scripts/demo/capture.mjs --phase5`, and look at the captures.
 
+## Archive and dashboard (Phase 6)
+
+`docs/architecture.md` §17 is the design. What must hold:
+
+- **One set of rules.** States, follow-ups, periods, figures and list filters
+  live in `assets/js/lifecycle.js`, shared by the page and the CSV export.
+  Never compute a figure a second way; change it there and add its case to
+  `check.mjs lifecycle`. The database only counts (`texc_overview()`).
+- **Archiving is not withdrawing and never deletes.** While archived, every
+  client endpoint refuses with the uniform 410 (`lib/client-access.js`), and
+  saves, publishing and acceptance are refused (the server and the database
+  both). Only the Phase 7 purge deletes.
+- **What reaches the dashboard is what it needs**: no link token, passphrase
+  or proposal content in `texc_overview()`; the client link only for editors
+  and above.
+- **The CSV defuses formulas and is audited before it is sent.** Same-site
+  only. Never add a column holding anything a viewer could not already see.
+- **Practice proposals never count** in a figure or a follow-up.
+- After any change here run `check.mjs lifecycle schema dashboard` and
+  `node scripts/demo/capture.mjs --phase6`, and look at the captures.
+
 ## Generated files
 
-`views/*.html`, `lib/editor-html.js`, `lib/signin-html.js`,
+`views/*.html`, `lib/editor-html.js`, `lib/signin-html.js`, `lib/dashboard-html.js`,
 `lib/template-data.js` and `lib/demo-fixture.js` are built by
 `node scripts/build.mjs`. Never hand-edit them. `public/` (what Vercel serves)
 is written by `--public` and is git-ignored. The build is deterministic: a

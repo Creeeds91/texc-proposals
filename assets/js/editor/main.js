@@ -82,7 +82,7 @@ function onSaveState(status, detail) {
   if (status === 'saved') el.textContent = `Saved ${timeOf(detail || new Date().toISOString())}`;
   else if (status === 'saving') el.textContent = 'Saving…';
   else if (status === 'dirty') el.textContent = 'Unsaved changes';
-  else if (status === 'conflict') el.textContent = 'Not saved — someone else saved this proposal';
+  else if (status === 'conflict') el.textContent = detail && detail.error === 'archived' ? 'Not saved — this proposal is archived' : 'Not saved — someone else saved this proposal';
   else if (status === 'error') el.textContent = `Not saved yet — ${detail || 'trying again shortly'}. Your changes are kept in this browser.`;
 }
 
@@ -330,6 +330,10 @@ function renderStatus() {
   const p = state.proposal;
   if (!p) { el.replaceChildren(h('span', { text: PROPOSAL_ID ? '' : 'No proposal open' })); return; }
   const current = (p.revisions || []).find((r) => r.current);
+  if (p.archivedAt) {
+    el.replaceChildren(h('span', { class: 'ed-accepted is-stale' }, icon('archive'), h('span', { text: `${p.reference || 'Draft'} · archived ${new Date(p.archivedAt).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Australia/Hobart' })}. Restore it to make changes.` })));
+    return;
+  }
   const bits = [p.reference || 'Not yet issued'];
   if (current) bits.push(`Rev ${current.label} ${p.status === 'withdrawn' ? 'withdrawn' : 'issued'}`);
   if (p.openCount) bits.push(`opened ${p.openCount}×`);
@@ -375,7 +379,8 @@ async function openPicker({ closable = true } = {}) {
       h('button', { type: 'button', class: 'btn btn--secondary btn--sm', onclick: async () => {
         const r = await api('GET', '/api/editor?fixture=demo');
         if (r.ok) createAndOpen(r.json);
-      } }, icon('book-open'), h('span', { text: 'New from the demo (fictional)' }))),
+      } }, icon('book-open'), h('span', { text: 'New from the demo (fictional)' })),
+      h('a', { class: 'btn btn--secondary btn--sm', href: '/dashboard' }, icon('chart-column'), h('span', { text: 'Dashboard and archive' }))),
     listBox);
   dlg.classList.add('ed-dialog--wide');
   if (!closable) {
@@ -390,7 +395,43 @@ async function openPicker({ closable = true } = {}) {
         h('span', { class: 'ed-proposal-ref', text: p.reference || 'Draft' }),
         h('span', { class: 'ed-proposal-name', text: [p.project || 'Untitled', p.client_company].filter(Boolean).join(' — ') }),
         h('span', { class: 'ed-proposal-meta', text: `${STATUS[p.status] || p.status} · updated ${new Date(p.updated_at).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })}` })))))
-    : h('p', { class: 'ed-hint', text: 'No proposals yet. Start one above.' }));
+    : h('p', { class: 'ed-hint', text: 'No proposals yet. Start one above.' }),
+    h('p', { class: 'ed-hint', text: 'Archived proposals are on the dashboard.' }));
+}
+
+/** An archived proposal takes no changes; restoring it is one step, and recorded. */
+function archivedDialog() {
+  const p = state.proposal || {};
+  const dlg = dialog('This proposal is archived',
+    h('p', { class: 'ed-hint ed-block', text: `${p.archivedBy || 'Someone'} archived it${p.archiveReason ? `: “${p.archiveReason}”` : ''}. While it is archived nothing can be saved or published, and its client link does not open. Restoring it brings all of that back.` }),
+    h('div', { class: 'ed-dialog-foot' },
+      h('button', { type: 'button', class: 'btn btn--primary btn--sm', onclick: async () => {
+        const r = await api('POST', '/api/proposals', { action: 'restore', id: PROPOSAL_ID });
+        if (r.ok) { location.reload(); return; }
+        toast((r.json && r.json.error) || 'It could not be restored.');
+      } }, icon('rotate-ccw'), h('span', { text: 'Restore it' })),
+      h('a', { class: 'btn btn--secondary btn--sm', href: '/dashboard' }, h('span', { text: 'Back to the dashboard' }))));
+  return dlg;
+}
+
+/** File the open proposal away, with a reason; the dashboard is where it then lives. */
+function archiveDialog() {
+  const p = state.proposal || {};
+  const live = p.status === 'issued' && !(p.acceptances || []).some((a) => a.current);
+  const reason = h('input', { type: 'text', id: 'ar-reason', maxlength: '300', autocomplete: 'off' });
+  const dlg = dialog('Archive this proposal',
+    h('p', { class: 'ed-hint ed-block', text: 'Archiving files it away: it leaves the editor’s list and stays on the dashboard, with its history. It is not withdrawn and nothing is deleted. It can be restored at any time.' }),
+    live ? h('p', { class: 'ed-hint ed-block ed-warn', text: 'Its client link is live. While it is archived the link will not open.' }) : null,
+    h('label', { class: 'ed-field' }, h('span', { class: 'ed-label', text: 'Why? (kept with it)' }), reason),
+    h('div', { class: 'ed-dialog-foot' },
+      h('button', { type: 'button', class: 'btn btn--primary btn--sm', id: 'ar-go', onclick: async () => {
+        await saver.flush();
+        const r = await api('POST', '/api/proposals', { action: 'archive', id: PROPOSAL_ID, reason: reason.value });
+        if (r.ok) { location.assign('/dashboard'); return; }
+        toast((r.json && r.json.error) || 'It could not be archived.');
+      } }, icon('archive'), h('span', { text: 'Archive it' })),
+      h('button', { type: 'button', class: 'btn btn--secondary btn--sm', onclick: () => dlg.close() }, 'Cancel')));
+  reason.focus();
 }
 
 async function createAndOpen(cfg) {
@@ -401,6 +442,7 @@ async function createAndOpen(cfg) {
 
 /** Someone else saved first: show both choices plainly; never overwrite silently. */
 function showConflict(info) {
+  if (info && info.error === 'archived') { archivedDialog(); return; }
   const when = info && info.updated_at ? timeOf(info.updated_at) : '';
   const dlg = dialog('Someone else saved this proposal',
     h('p', { class: 'ed-hint ed-block', text: `${(info && info.updated_by) || 'A colleague'} saved it${when ? ` at ${when}` : ''}, after you opened it. Your latest changes are not saved yet.` }),
@@ -478,6 +520,7 @@ function menu() {
   const issued = p && p.url && p.status === 'issued';
   dlg.append(
     h('div', { class: 'ed-dialog-head' }, h('h2', { text: 'Menu' }), h('button', { type: 'button', class: 'ed-icon', 'aria-label': 'Close', onclick: () => dlg.close() }, icon('x'))),
+    item('Dashboard and archive', 'chart-column', () => location.assign('/dashboard')),
     item('All proposals', 'list', () => openPicker()),
     item('New proposal', 'file-text', () => createAndOpen(newProposal())),
     item('Replace with the demo (fictional client)', 'book-open', async () => {
@@ -487,6 +530,7 @@ function menu() {
     }, !!PROPOSAL_ID),
     item('Import a config (.json)', 'upload', importJson, !!PROPOSAL_ID),
     item('Export this draft (.json)', 'download', exportJson),
+    p && !p.archivedAt ? item('Archive this proposal…', 'archive', archiveDialog) : null,
     issued ? item('Copy the client link', 'external-link', () => copy(p.url, 'Client link copied')) : null,
     admin && p && p.reference ? item('Show the passphrase (recorded)', 'lock', async () => {
       const r = await adminAction('passphrase');
@@ -619,6 +663,7 @@ async function boot() {
   initEffects(D);
   ROOT.classList.add('ready');
   if (location.hash === '#people' && ctx.isAdmin()) openPeople(ctx);
+  if (state.proposal && state.proposal.archivedAt) archivedDialog();
   // What the check found for each attached file; the checklist waits for it.
   // Only the Documents panel shows them; elsewhere the badges are enough, and
   // redrawing the drawer under someone's typing is not.

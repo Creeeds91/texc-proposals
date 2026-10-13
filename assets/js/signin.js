@@ -1,6 +1,6 @@
 /** The staff sign-in page: an address, then the six-digit code emailed to it. */
 const D = document;
-const next = new URLSearchParams(location.search).get('next') || '/editor';
+const next = new URLSearchParams(location.search).get('next') || '/dashboard';
 const step = (name) => {
   for (const card of D.querySelectorAll('[data-step]')) card.hidden = card.dataset.step !== name;
   setTimeout(() => D.getElementById(name === 'email' ? 'email' : 'code').focus(), 30);
@@ -39,7 +39,7 @@ D.getElementById('code-form').addEventListener('submit', async (e) => {
   try {
     const r = await call('verify', { email, code, next });
     const j = await r.json().catch(() => ({}));
-    if (r.ok && j.ok) { location.assign(j.next || '/editor'); return; }
+    if (r.ok && j.ok) { location.assign(j.next || '/dashboard'); return; }
     msg.textContent = r.status === 429 ? 'Too many attempts. Ask for a new code in a few minutes.' : (j.error || 'That code did not work.');
   } catch { msg.textContent = 'That did not go through. Check your connection and try again.'; }
   finally { btn.disabled = false; }

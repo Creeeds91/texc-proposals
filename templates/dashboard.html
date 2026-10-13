@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en-AU" data-boot="dashboard">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<title>Dashboard · {{brand.name}} Proposals</title>
+<link rel="icon" href="{{brand.logoGold}}" type="image/svg+xml">
+<link rel="preload" href="/assets/fonts/Oxanium-800-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/assets/css/tokens.css">
+<link rel="stylesheet" href="/assets/css/proposal.css">
+<link rel="stylesheet" href="/assets/css/dashboard.css">
+<script type="module" src="/assets/js/dashboard.js"></script>
+</head>
+<body class="db" data-surface="paper">
+<a class="skip" href="#db-main">Skip to the dashboard</a>
+<header class="db-top">
+  <div class="db-top-inner">
+    <a class="db-brand" href="/dashboard"><img src="{{brand.logoGold}}" alt="{{brand.name}}" width="72" height="28"><span>Proposals</span></a>
+    <nav class="db-nav" aria-label="Staff">
+      <a href="/dashboard" aria-current="page">Dashboard</a>
+      <a href="/editor" data-role="editor" hidden>Editor</a>
+      <a href="/editor#people" data-role="admin" hidden>People</a>
+    </nav>
+    <div class="db-who"><span id="db-who"></span><button type="button" class="db-signout" id="db-signout">Sign out</button></div>
+  </div>
+</header>
+
+<main id="db-main" class="db-main" tabindex="-1">
+  <div class="db-head">
+    <div>
+      <h1 class="db-title">Dashboard</h1>
+      <p class="db-sub">Every proposal, where it stands, and who needs a call.</p>
+    </div>
+    <a class="btn btn--primary btn--sm" href="/editor" data-role="editor" hidden><svg class="ic" aria-hidden="true"><use href="/assets/img/icons.svg#plus"></use></svg><span>New proposal</span></a>
+  </div>
+
+  <p class="db-loading" id="db-loading" role="status">Loading…</p>
+  <p class="db-error" id="db-error" role="alert" hidden></p>
+
+  <section class="db-figures" aria-labelledby="db-figures-h" hidden>
+    <div class="db-section-head">
+      <h2 class="db-h2" id="db-figures-h">Figures</h2>
+      <label class="db-control"><span class="db-control-label">Period</span>
+        <select id="f-period"></select>
+      </label>
+    </div>
+    <ul class="db-tiles" id="db-tiles"></ul>
+    <p class="db-note" id="db-figures-note"></p>
+  </section>
+
+  <div class="db-split" hidden>
+    <section class="db-card db-chart" aria-labelledby="db-chart-h">
+      <div class="db-card-head">
+        <h2 class="db-h3" id="db-chart-h">Issued and accepted, last 12 months</h2>
+        <button type="button" class="db-textbtn" id="db-chart-table-btn" aria-controls="db-chart-table" aria-expanded="false"><svg class="ic" aria-hidden="true"><use href="/assets/img/icons.svg#table"></use></svg><span>Show as a table</span></button>
+      </div>
+      <ul class="db-legend" id="db-legend"></ul>
+      <div class="db-plot" id="db-plot"></div>
+      <div class="db-chart-table" id="db-chart-table" hidden></div>
+      <p class="db-note">A proposal counts in the month it was first issued, and in the month it was first accepted. Practice proposals are left out.</p>
+    </section>
+
+    <section class="db-card db-follow" aria-labelledby="db-follow-h">
+      <div class="db-card-head">
+        <h2 class="db-h3" id="db-follow-h">Needs a follow-up</h2>
+        <span class="db-count" id="db-follow-count"></span>
+      </div>
+      <ol class="db-follow-list" id="db-follow-list"></ol>
+    </section>
+  </div>
+
+  <section class="db-list" aria-labelledby="db-list-h" hidden>
+    <div class="db-section-head">
+      <h2 class="db-h2" id="db-list-h">Proposals</h2>
+      <p class="db-count" id="db-list-count" role="status" aria-live="polite"></p>
+    </div>
+    <form class="db-filters" id="db-filters" role="search">
+      <label class="db-control db-control--search"><span class="db-control-label">Search</span>
+        <span class="db-search"><svg class="ic" aria-hidden="true"><use href="/assets/img/icons.svg#search"></use></svg><input type="search" id="f-q" placeholder="Client, project, place, reference" autocomplete="off" maxlength="200"></span>
+      </label>
+      <label class="db-control db-control--wide"><span class="db-control-label">Showing</span><select id="f-state"></select></label>
+      <label class="db-control"><span class="db-control-label">Region</span><select id="f-region"></select></label>
+      <label class="db-control"><span class="db-control-label">Service</span><select id="f-service"></select></label>
+      <label class="db-control"><span class="db-control-label">Order</span><select id="f-sort"></select></label>
+      <a class="btn btn--secondary btn--sm db-export" id="db-export" href="/api/export" data-role="editor" hidden><svg class="ic" aria-hidden="true"><use href="/assets/img/icons.svg#download"></use></svg><span>Export CSV</span></a>
+    </form>
+    <div class="db-table-wrap">
+      <table class="db-table" id="db-table">
+        <thead>
+          <tr><th scope="col">Reference</th><th scope="col">Project and client</th><th scope="col">Site</th><th scope="col">Where it stands</th><th scope="col" class="n">Value ex GST</th><th scope="col">Valid until</th><th scope="col">Last activity</th></tr>
+        </thead>
+        <tbody id="db-rows"></tbody>
+      </table>
+    </div>
+    <p class="db-empty" id="db-empty" hidden></p>
+  </section>
+</main>
+
+<dialog class="db-panel" id="db-panel" aria-labelledby="db-panel-title"></dialog>
+<div class="db-toast" id="db-toast" role="status" aria-live="polite" hidden></div>
+</body>
+</html>

@@ -7,12 +7,15 @@
  *
  * Saves are conditional on the version the editor loaded (version=eq.<n>), so
  * two people editing at once can never silently overwrite each other. "Keep
- * mine" (force) is an explicit choice, and it is audited.
+ * mine" (force) is an explicit choice, and it is audited. An archived proposal
+ * takes no saves (409 { error: 'archived' }) until it is restored. Until a
+ * proposal is first issued, each save also refreshes what the dashboard lists
+ * and searches it by.
  */
 import { db, rest } from '../lib/db.js';
 import { body, refuseCrossSite, onlyMethods, noStore } from '../lib/http.js';
 import { requireRole } from '../lib/accounts.js';
-import { getDraft, summary, guardSafety } from '../lib/proposals.js';
+import { getDraft, getProposal, summary, guardSafety, listingFields } from '../lib/proposals.js';
 import { recordAudit } from '../lib/events.js';
 import { UUID_RE } from '../lib/tokens.js';
 import { rateLimited, tooMany } from '../lib/ratelimit.js';
@@ -47,15 +50,19 @@ export default async function handler(req, res) {
   if (Buffer.byteLength(JSON.stringify(b.config)) > MAX_BYTES) { res.status(413).json({ error: 'This proposal is over 1 MB. Remove something large and try again.' }); return; }
 
   // Safety lines: refused below administrator, stamped and recorded at administrator.
-  const stored = await getDraft(d, id);
-  if (!stored) { res.status(404).json({ error: 'No such proposal.' }); return; }
+  const [stored, prop] = await Promise.all([getDraft(d, id), getProposal(d, id)]);
+  if (!stored || !prop) { res.status(404).json({ error: 'No such proposal.' }); return; }
+  if (prop.archived_at) { res.status(409).json({ error: 'archived', message: 'This proposal is archived. Restore it from the dashboard to make changes.' }); return; }
   const safety = guardSafety(who, stored.config, b.config);
   if (!safety.ok) { res.status(403).json({ error: safety.error }); return; }
   if (safety.changed.length) await recordAudit(d, req, who, 'safety_unlocked', { proposalId: id, detail: { services: safety.changed } });
 
   const now = new Date().toISOString();
   let r = await rest(d, 'PATCH', `texc_drafts?proposal_id=eq.${id}&version=eq.${version}`, { config: b.config, version: version + 1, updated_at: now, updated_by: who.email });
-  if (r.ok && Array.isArray(r.json) && r.json.length === 1) { res.status(200).json({ version: version + 1, updated_at: now }); return; }
+  const listed = () => (prop.status === 'draft' && !prop.current_revision_id
+    ? rest(d, 'PATCH', `texc_proposals?id=eq.${id}&status=eq.draft&current_revision_id=is.null`, listingFields(b.config), { prefer: 'return=minimal' })
+    : null);
+  if (r.ok && Array.isArray(r.json) && r.json.length === 1) { await listed(); res.status(200).json({ version: version + 1, updated_at: now }); return; }
   if (!r.ok) { res.status(503).json({ error: 'Saving failed. Your changes are still here; it will try again.' }); return; }
 
   // Nothing matched: someone saved first (or the proposal does not exist).
@@ -65,6 +72,7 @@ export default async function handler(req, res) {
     r = await rest(d, 'PATCH', `texc_drafts?proposal_id=eq.${id}&version=eq.${current.version}`, { config: b.config, version: current.version + 1, updated_at: now, updated_by: who.email });
     if (r.ok && r.json && r.json.length === 1) {
       await recordAudit(d, req, who, 'draft_overwritten', { proposalId: id, detail: { overwrote: current.updated_by, theirVersion: current.version } });
+      await listed();
       res.status(200).json({ version: current.version + 1, updated_at: now });
       return;
     }

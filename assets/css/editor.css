@@ -278,3 +278,4 @@ html.ed-collapsed .ed-collapse { left: 16px; }
 .ed-accepted .ic { width: 14px; height: 14px; flex: none; }
 .ed-accepted.is-stale { color: var(--caution); }
 .ed-accepted .ed-linkbtn { margin-left: 4px; }
+.ed-warn { color: var(--caution); }

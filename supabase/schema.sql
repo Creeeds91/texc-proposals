@@ -330,6 +330,7 @@ declare
 begin
   select * into prop from public.texc_proposals where id = (p->>'proposal_id')::uuid for update;
   if not found then raise exception 'no such proposal' using errcode = 'PT404'; end if;
+  if prop.archived_at is not null then raise exception 'conflict: archived' using errcode = 'PT409'; end if;
   if prop.reference is null or prop.reference is distinct from p->>'reference' then
     raise exception 'conflict: reference' using errcode = 'PT409';
   end if;
@@ -377,7 +378,8 @@ begin
     site_region = coalesce(p->>'site_region', ''),
     client_company = coalesce(p->>'client_company', ''),
     services = coalesce((select array_agg(x) from jsonb_array_elements_text(coalesce(p->'services', '[]'::jsonb)) x), '{}'),
-    doc_type = coalesce(p->>'doc_type', prop.doc_type)
+    doc_type = coalesce(p->>'doc_type', prop.doc_type),
+    search_extra = left(coalesce(p->>'search_extra', ''), 4000)
   where id = prop.id;
 
   update public.texc_drafts set base_revision_id = rev_id where proposal_id = prop.id;
@@ -557,6 +559,7 @@ declare
 begin
   select * into prop from public.texc_proposals where id = (p->>'proposal_id')::uuid for update;
   if not found then raise exception 'no such proposal' using errcode = 'PT404'; end if;
+  if prop.archived_at is not null then raise exception 'conflict: archived' using errcode = 'PT409'; end if;
   select * into rev from public.texc_proposal_revisions where id = (p->>'revision_id')::uuid and proposal_id = prop.id;
   if not found then raise exception 'no such revision' using errcode = 'PT404'; end if;
   select * into had from public.texc_acceptances where revision_id = rev.id;
@@ -595,6 +598,119 @@ begin
   return jsonb_build_object('won', true, 'id', p->>'id', 'accepted_at', p->>'accepted_at', 'name', p->>'name', 'kind', p->>'kind');
 end $$;
 
+-- ---------------------------------------------------------------- archive, search and reporting (Phase 6)
+
+-- Archiving files a proposal away; it is not a withdrawal, and its status and
+-- history stay exactly as they were. While archived, its client link refuses
+-- like any dead link, nothing can be saved, published or accepted on it, and
+-- it leaves the editor's list. Restoring brings all of that back (a link still
+-- within its expiry opens again). Deleting is not here: that is a later
+-- phase's super-only purge.
+alter table public.texc_proposals add column if not exists archived_at timestamptz;
+alter table public.texc_proposals add column if not exists archived_by text;
+alter table public.texc_proposals add column if not exists archive_reason text;
+-- Words staff search by that are not columns of their own (service names,
+-- document type, the contact, document titles). Written at publish, and on
+-- each save while a proposal has never been issued.
+alter table public.texc_proposals add column if not exists search_extra text not null default '';
+-- Generated, so it is never written, never stale, and never part of a restore
+-- (COPY skips generated columns; the column-order check ignores it).
+alter table public.texc_proposals add column if not exists search tsvector generated always as (
+  to_tsvector('simple'::regconfig, coalesce(reference, '') || ' ' || project || ' ' || client_company || ' '
+    || site_locality || ' ' || site_region || ' ' || search_extra)) stored;
+create index if not exists texc_proposals_search on public.texc_proposals using gin (search);
+
+-- Archive (p.archive = true, with a reason) or restore (false). Saying the
+-- state it is already in changes nothing and logs nothing.
+create or replace function public.texc_set_archived(p jsonb)
+returns jsonb language plpgsql security definer set search_path = '' as $$
+declare
+  prop public.texc_proposals%rowtype;
+  want boolean := (p->>'archive')::boolean;
+  why text := left(btrim(coalesce(p->>'reason', '')), 300);
+begin
+  if want is null then raise exception 'archive must be true or false' using errcode = '22023'; end if;
+  select * into prop from public.texc_proposals where id = (p->>'proposal_id')::uuid for update;
+  if not found then raise exception 'no such proposal' using errcode = 'PT404'; end if;
+  if (prop.archived_at is not null) = want then
+    return jsonb_build_object('changed', false, 'archived_at', prop.archived_at);
+  end if;
+  if want and length(why) < 3 then raise exception 'a reason is needed' using errcode = '22023'; end if;
+  update public.texc_proposals set
+    archived_at = case when want then now() end,
+    archived_by = case when want then p->>'actor' end,
+    archive_reason = case when want then why end
+  where id = prop.id;
+  insert into public.texc_events (proposal_id, event, actor, meta)
+  values (prop.id, case when want then 'archived' else 'restored' end, p->>'actor',
+          case when want then jsonb_build_object('reason', why)
+               else jsonb_build_object('archived_at', prop.archived_at, 'reason', prop.archive_reason) end);
+  return jsonb_build_object('changed', true, 'archived_at', case when want then now() end);
+end $$;
+
+-- Staff search: every word is a prefix ("ash civ" finds Ashgrove Civil), all
+-- must match, and a reference matches on any part of it. Only letters and
+-- digits ever reach the query, so nothing typed can be an operator.
+create or replace function public.texc_search(p_q text)
+returns jsonb language plpgsql stable security definer set search_path = '' as $$
+declare
+  q text := lower(btrim(left(coalesce(p_q, ''), 200)));
+  words text[];
+begin
+  select array_agg(w) into words from (
+    select w from regexp_split_to_table(regexp_replace(q, '[^[:alnum:]]+', ' ', 'g'), ' ') w where w <> '' limit 8) s;
+  if words is null then return '[]'::jsonb; end if;
+  return coalesce((select jsonb_agg(id) from (
+    select pr.id from public.texc_proposals pr
+    where pr.search @@ to_tsquery('simple'::regconfig, array_to_string(array(select x || ':*' from unnest(words) x), ' & '))
+       or (pr.reference is not null and strpos(lower(pr.reference), q) > 0)
+    order by pr.updated_at desc limit 500) s), '[]'::jsonb);
+end $$;
+
+-- One row per proposal for the dashboard: its own columns, its current
+-- revision, acceptance on that revision and ever, and how the client has
+-- engaged with the current revision. Counting happens here; deciding what a
+-- row means (lifecycle, follow-ups, win rate) is assets/js/lifecycle.js.
+create or replace function public.texc_overview(p jsonb)
+returns jsonb language sql stable security definer set search_path = '' as $$
+  select coalesce(jsonb_agg(to_jsonb(o) order by o.updated_at desc), '[]'::jsonb) from (
+    select pr.id, pr.reference, pr.project, pr.client_company, pr.site_locality, pr.site_region, pr.services,
+      pr.doc_type, pr.status, pr.issued_at, pr.link_expires_at, pr.valid_until, pr.value_cents, pr.first_opened_at,
+      pr.last_opened_at, pr.open_count, pr.accepted_at, pr.archived_at, pr.archived_by, pr.archive_reason, pr.is_test,
+      pr.created_at, pr.created_by, pr.updated_at,
+      cur.rev_label as rev, cur.published_at as rev_published_at, cur.published_by as rev_published_by,
+      (select count(*) from public.texc_proposal_revisions r where r.proposal_id = pr.id) as revisions,
+      acc.accepted_at as current_accepted_at, acc.kind as current_accepted_kind, acc.name as current_accepted_by,
+      (acc.totals->>'subtotal')::bigint as current_accepted_subtotal_cents,
+      ever.first_accepted_at, ever.last_accepted_rev, ever.last_accepted_subtotal_cents,
+      v.views_current, v.sessions_current, v.last_view_current,
+      e.docs_opened_current, e.options_current, e.changes_requested_at,
+      dr.updated_at as draft_updated_at, dr.updated_by as draft_updated_by,
+      left(coalesce(dr.config->'client'->>'contactName', ''), 160) as contact
+    from public.texc_proposals pr
+    left join public.texc_proposal_revisions cur on cur.id = pr.current_revision_id
+    left join public.texc_acceptances acc on acc.revision_id = pr.current_revision_id
+    left join lateral (
+      select min(a.accepted_at) as first_accepted_at,
+        (array_agg(r.rev_label order by a.accepted_at desc))[1] as last_accepted_rev,
+        (array_agg((a.totals->>'subtotal')::bigint order by a.accepted_at desc))[1] as last_accepted_subtotal_cents
+      from public.texc_acceptances a join public.texc_proposal_revisions r on r.id = a.revision_id
+      where a.proposal_id = pr.id) ever on true
+    left join lateral (
+      select count(*) as views_current, count(distinct w.session) as sessions_current, max(w.created_at) as last_view_current
+      from public.texc_proposal_views w where w.proposal_id = pr.id and w.revision_id = pr.current_revision_id) v on true
+    left join lateral (
+      select count(*) filter (where ev.event in ('attachment_opened', 'attachment_downloaded')) as docs_opened_current,
+        count(*) filter (where ev.event = 'option_toggled') as options_current,
+        max(ev.created_at) filter (where ev.event = 'changes_requested') as changes_requested_at
+      from public.texc_events ev where ev.proposal_id = pr.id and ev.revision_id = pr.current_revision_id) e on true
+    left join public.texc_drafts dr on dr.proposal_id = pr.id
+    where coalesce((p->>'archived')::boolean, true) or pr.archived_at is null
+    order by pr.updated_at desc
+    limit greatest(1, least(coalesce((p->>'limit')::integer, 2000), 5000))
+  ) o
+$$;
+
 -- ---------------------------------------------------------------- locked down from birth
 
 do $$
@@ -614,7 +730,8 @@ declare f text;
 begin
   foreach f in array array['texc_touch_updated_at()', 'texc_refuse_change()', 'texc_revisions_guard()',
     'texc_rate_hit(text, integer, integer)', 'texc_claim_reference(uuid, text)', 'texc_publish(jsonb)',
-    'texc_rotate(jsonb)', 'texc_withdraw(uuid, text, text)', 'texc_record_view(jsonb)', 'texc_accept(jsonb)'] loop
+    'texc_rotate(jsonb)', 'texc_withdraw(uuid, text, text)', 'texc_record_view(jsonb)', 'texc_accept(jsonb)',
+    'texc_set_archived(jsonb)', 'texc_search(text)', 'texc_overview(jsonb)'] loop
     execute format('revoke execute on function public.%s from public, anon, authenticated', f);
     execute format('grant execute on function public.%s to service_role', f);
   end loop;

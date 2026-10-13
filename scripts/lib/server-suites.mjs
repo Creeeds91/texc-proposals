@@ -17,6 +17,7 @@
 import { readFileSync, existsSync, mkdirSync, readdirSync } from 'node:fs';
 import { deflateSync, crc32 as zlibCrc32 } from 'node:zlib';
 import { spawnSync } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runSchemaProof } from '../schema-standup-check.mjs';
@@ -1001,5 +1002,200 @@ export async function suiteFlow() {
     'on the phone the client is told what is missing, ticks an optional item, draws a signature and accepts; the quotation locks to what was accepted, and stays so on reopening',
     'the open is recorded and the office told; Rev B needs the acceptance of Rev A acknowledged, then asks the client to accept again; Rev A opens superseded and still accepted',
     'rotation kills the old link at once; an access request reaches admins, is approved, and the person is emailed',
+  ] };
+}
+
+/* ------------------------------------------------------------ dashboard */
+
+/**
+ * The archive and dashboard (Phase 6), on a year of fictional proposals
+ * (scripts/demo/dashboard-seed.mjs) plus live ones made through the API:
+ * who may see and do what, search, the CSV export, archive and restore end
+ * to end (the client link included), practice proposals, and the page itself
+ * in a browser at 1440 and 390.
+ */
+export async function suiteDashboard() {
+  const a = await app();
+  if (!a) return skipNoStack();
+  const fails = [];
+  const notes = [];
+  const expect = (cond, what) => { if (!cond) fails.push(what); };
+  const { psql } = await import('./local-supabase.mjs');
+  const q = (sql) => psql(a.sb.conn, sql);
+  const staff = await checkStaff(a);
+  const { seedDashboard } = await import('../demo/dashboard-seed.mjs');
+  const LC = await import('../../assets/js/lifecycle.js');
+  const seeded = seedDashboard(a.sb.conn);
+  const goneBody = '{"error":"gone"}';
+  const tag = randomBytes(3).toString('hex');
+
+  // 1. Who may see and do what.
+  const anon = client(a);
+  const page = await anon.call('GET', '/dashboard');
+  expect(page.status === 302 && page.headers.get('location') === '/signin?next=%2Fdashboard', `/dashboard without a session answered ${page.status} ${page.headers.get('location')}`);
+  expect((await anon.call('GET', '/api/analytics')).status === 401, 'the dashboard data answered without a session');
+  const viewerEmail = `dash-viewer-${tag}@example.com`;
+  const editorEmail = `dash-editor-${tag}@example.com`;
+  // As in life: each asks for access first, then an administrator approves them.
+  await anon.call('POST', '/api/auth?action=code', { email: viewerEmail });
+  await anon.call('POST', '/api/auth?action=code', { email: editorEmail });
+  await staff.call('POST', '/api/people', { email: viewerEmail, status: 'active', role: 'viewer' });
+  await staff.call('POST', '/api/people', { email: editorEmail, status: 'active', role: 'editor' });
+  const viewer = client(a);
+  await viewer.signIn(viewerEmail);
+  const editor = client(a);
+  await editor.signIn(editorEmail);
+  const vPage = await viewer.call('GET', '/dashboard');
+  const csp = vPage.headers.get('content-security-policy') || '';
+  expect(vPage.status === 200 && /<title>Dashboard/.test(vPage.text) && /script-src 'self'/.test(csp) && !/unsafe-inline/.test(csp) && /frame-ancestors 'none'/.test(csp),
+    `a viewer opening the dashboard: ${vPage.status}, CSP ${csp.slice(0, 60)}`);
+  const vData = await viewer.call('GET', '/api/analytics');
+  const rows = (vData.json && vData.json.rows) || [];
+  const leaked = rows.flatMap((r) => ['access_token', 'passphrase_enc', 'published_text', 'enc', 'slug', 'search'].filter((k) => k in r));
+  expect(vData.status === 200 && rows.length >= seeded.count && !leaked.length, `the dashboard data: ${vData.status}, ${rows.length} rows, leaked ${[...new Set(leaked)].join(' ')}`);
+  const vDetail = await viewer.call('GET', `/api/analytics?id=${seeded.ids.latrobe}`);
+  const sDetail = await staff.call('GET', `/api/analytics?id=${seeded.ids.latrobe}`);
+  expect(vDetail.status === 200 && vDetail.json.proposal.url === null && sDetail.json.proposal.url && vDetail.json.views.length === 4
+    && vDetail.json.events.some((e) => e.event === 'changes_requested' && /eastern batter/.test(e.meta.message)), 'one proposal\'s history: a viewer sees it all except the client link');
+  const vExport = await viewer.call('GET', '/api/export');
+  const vArchive = await viewer.call('POST', '/api/proposals', { action: 'archive', id: seeded.ids.wilmot, reason: 'Not ours to file' });
+  const ePractice = await editor.call('POST', '/api/proposals', { action: 'practice', id: seeded.ids.wilmot, on: true });
+  expect(vExport.status === 403 && vArchive.status === 403 && ePractice.status === 403, `a viewer exporting ${vExport.status}, a viewer archiving ${vArchive.status}, an editor marking practice ${ePractice.status}`);
+
+  // 2. Search: prefixes of any words, in any order; references by any part.
+  const find = async (text) => ((await viewer.call('GET', `/api/analytics?q=${encodeURIComponent(text)}`)).json || {}).ids || [];
+  const ref = q(`select reference from public.texc_proposals where id = '${seeded.ids.latrobe}'`);
+  expect((await find('petrak granite')).includes(seeded.ids.bicheno) && (await find('Shot Sleeping')).includes(seeded.ids.fingal) && (await find(ref)).includes(seeded.ids.latrobe)
+    && !(await find('petrak zzzz')).length && (await find("') or 1=1 --")).length === 0, 'search by contact, service name and reference; every word must match; quotes are only words');
+
+  // 3. The CSV export: the list as filtered, formula-safe, recorded.
+  const audits = () => Number(q(`select count(*) from public.texc_staff_audit where action = 'exported'`));
+  const before = audits();
+  // Read as bytes: a text decoder would quietly drop the byte-order mark being checked for.
+  const raw = await fetch(`${a.url}/api/export?state=accepted&region=North-West%20Tasmania`, { headers: { cookie: editor.cookie(), origin: a.url } });
+  const bytes = Buffer.from(await raw.arrayBuffer());
+  const csv = { status: raw.status, headers: raw.headers, text: bytes.toString('utf8') };
+  expect(csv.status === 200 && /^text\/csv/.test(csv.headers.get('content-type') || '') && /attachment; filename=".+-proposals-\d{4}-\d{2}-\d{2}\.csv"/.test(csv.headers.get('content-disposition') || '')
+    && bytes.subarray(0, 3).equals(Buffer.from([0xef, 0xbb, 0xbf])) && /Highway cutting widening/.test(csv.text) && !/Boat ramp approach/.test(csv.text) && audits() === before + 1,
+    `export: ${csv.status} ${csv.headers.get('content-type')} ${csv.headers.get('content-disposition')}, audited ${audits() - before}`);
+  const crossSite = await editor.call('GET', '/api/export', undefined, { origin: 'https://evil.example', 'sec-fetch-site': 'cross-site' });
+  expect(crossSite.status === 403 && audits() === before + 1, `an export asked for by another site answered ${crossSite.status}`);
+  const hostile = await staff.call('POST', '/api/proposals', { action: 'create', config: { meta: { project: `Formula check ${tag}` }, client: { company: '=HYPERLINK("http://evil.example","Open")' } } });
+  const draftCsv = await staff.call('GET', `/api/export?state=draft&q=${encodeURIComponent(`formula check ${tag}`)}`);
+  expect(hostile.status === 200 && /"'=HYPERLINK\(""http:\/\/evil\.example"",""Open""\)"/.test(draftCsv.text) && draftCsv.text.split('\r\n').length === 3,
+    `a formula-shaped client name was not defused in the export: ${draftCsv.text.split('\r\n')[1]}`);
+
+  // 4. Archive and restore, end to end, on a live proposal.
+  const live = await demoProposal(staff);
+  const open = () => client(a).call('GET', `/api/proposal?slug=${live.slug}&t=${live.t}`);
+  expect((await open()).status === 200, 'the live proposal did not open before archiving');
+  const noWhy = await editor.call('POST', '/api/proposals', { action: 'archive', id: live.id, reason: '' });
+  const arch = await editor.call('POST', '/api/proposals', { action: 'archive', id: live.id, reason: 'Awarded to another contractor' });
+  const whileArchived = await open();
+  const draft = await editor.call('GET', `/api/drafts?id=${live.id}`);
+  const save = await editor.call('PUT', '/api/drafts', { id: live.id, version: draft.json.version, config: draft.json.config });
+  const pub = await staff.call('POST', '/api/proposals', { action: 'publish', id: live.id, version: draft.json.version });
+  const listed = ((await editor.call('GET', '/api/proposals')).json.proposals || []).some((p) => p.id === live.id);
+  const archRow = ((await editor.call('GET', '/api/analytics')).json.rows || []).find((r) => r.id === live.id);
+  expect(noWhy.status === 400 && arch.status === 200 && arch.json.changed === true, `archiving: without a reason ${noWhy.status}, with one ${arch.status}`);
+  expect(whileArchived.status === 410 && whileArchived.text === goneBody, `the client link while archived answered ${whileArchived.status} ${whileArchived.text.slice(0, 60)}`);
+  expect(draft.status === 200 && draft.json.proposal.archivedAt && save.status === 409 && save.json.error === 'archived' && pub.status === 409, `while archived: open ${draft.status}, save ${save.status}, publish ${pub.status}`);
+  expect(!listed && archRow && LC.stateOf(archRow, new Date()) === 'archived' && archRow.status === 'issued', 'archived: out of the editor\'s list, archived on the dashboard, still issued (not withdrawn)');
+  const restored = await editor.call('POST', '/api/proposals', { action: 'restore', id: live.id });
+  const again = await editor.call('POST', '/api/proposals', { action: 'restore', id: live.id });
+  const afterRestore = await open();
+  const trail = q(`select string_agg(event, ',' order by id) from public.texc_events where proposal_id = '${live.id}' and event in ('archived', 'restored')`);
+  const audited = q(`select string_agg(action, ',' order by id) from public.texc_staff_audit where proposal_id = '${live.id}' and action in ('archived', 'restored')`);
+  expect(restored.status === 200 && restored.json.changed === true && again.json.changed === false && afterRestore.status === 200 && trail === 'archived,restored' && audited === 'archived,restored',
+    `restoring: ${restored.status}, again changed=${again.json && again.json.changed}, link ${afterRestore.status}, events ${trail}, audit ${audited}`);
+
+  // 5. Practice proposals leave every figure; drafts keep their listing current.
+  const practice = await staff.call('POST', '/api/proposals', { action: 'practice', id: seeded.ids.ridgeway, on: true });
+  const rows2 = (await staff.call('GET', '/api/analytics')).json.rows;
+  const afterFig = LC.figures(rows2, 'all', new Date());
+  const beforeFig = LC.figures(rows2.map((r) => (r.id === seeded.ids.ridgeway ? { ...r, is_test: false } : r)), 'all', new Date());
+  expect(practice.status === 200 && afterFig.issued === beforeFig.issued - 1 && afterFig.accepted === beforeFig.accepted - 1
+    && q(`select count(*) from public.texc_events where proposal_id = '${seeded.ids.ridgeway}' and event = 'marked_practice'`) === '1', `practice: ${practice.status}, issued ${beforeFig.issued}→${afterFig.issued}`);
+  await staff.call('POST', '/api/proposals', { action: 'practice', id: seeded.ids.ridgeway, on: false });
+  const fresh = await staff.call('POST', '/api/proposals', { action: 'create', config: { meta: { project: `Listing check ${tag}` } } });
+  const fd = await staff.call('GET', `/api/drafts?id=${fresh.json.id}`);
+  await staff.call('PUT', '/api/drafts', { id: fresh.json.id, version: fd.json.version, config: { ...fd.json.config, client: { company: `Ridgeline Listing ${tag} Pty Ltd`, contactName: 'Morgan Ashby' }, meta: { project: `Listing check ${tag}`, siteLocality: 'Scottsdale', siteRegion: 'Northern Tasmania' } } });
+  const listing = q(`select client_company || '|' || site_locality from public.texc_proposals where id = '${fresh.json.id}'`);
+  expect(listing === `Ridgeline Listing ${tag} Pty Ltd|Scottsdale` && (await find(`morgan ridgeline ${tag}`)).includes(fresh.json.id), `a draft's listing after a save: ${listing}`);
+
+  // 6. The page, in a browser.
+  const b = await browser();
+  if (!b) notes.push('NOT CHECKED in a browser: Playwright not found');
+  else {
+    const vctx = await b.browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, reducedMotion: 'reduce' });
+    const vp = await vctx.newPage();
+    const vproblems = [];
+    vp.on('console', (m) => { if (m.type() === 'error' || /Content Security Policy/i.test(m.text())) vproblems.push(m.text().slice(0, 160)); });
+    vp.on('pageerror', (e) => vproblems.push('script error: ' + e.message));
+    await vp.goto(`${a.url}/signin`);
+    await vp.fill('#email', viewerEmail);
+    await vp.click('#email-form button');
+    await vp.waitForSelector('[data-step="code"]:not([hidden])');
+    await vp.fill('#code', a.codeFor(a.outbox(), viewerEmail));
+    await vp.click('#code-form button');
+    await vp.waitForURL((u) => new URL(u).pathname === '/dashboard', { timeout: 15000 }).catch(() => {});
+    expect(new URL(vp.url()).pathname === '/dashboard', `signing in with nowhere else to go landed on ${vp.url()}`);
+    await vp.waitForSelector('.db-svg', { timeout: 15000 }).catch(() => {});
+    const phone = await vp.evaluate(() => ({
+      wide: document.documentElement.scrollWidth, tiles: document.querySelectorAll('.db-tile').length, cols: document.querySelectorAll('.db-col').length,
+      editorBits: [...document.querySelectorAll('[data-role]')].filter((e) => !e.hidden && e.getClientRects().length).length,
+    }));
+    expect(phone.wide <= 390 && phone.tiles === 5 && phone.cols === 12 && phone.editorBits === 0, `the viewer's dashboard at 390: ${JSON.stringify(phone)}`);
+    expect(!vproblems.length, `the viewer's page reported: ${vproblems.join(' | ')}`);
+    await vctx.close();
+
+    const { ctx, page: p, problems } = await signedInContext(a, b);
+    await p.goto(`${a.url}/dashboard?open=${seeded.ids.latrobe}`);
+    await p.waitForSelector('.db-timeline');
+    const panel = await p.evaluate(() => document.querySelector('#db-panel').innerText);
+    expect(/Sarah Kemp asked for changes/.test(panel) && /Accepted revision B online/.test(panel) && /Opened revision A/.test(panel), 'the history panel tells the proposal\'s story');
+    const stray = await p.evaluate(() => document.body.innerText + document.querySelector('#db-panel').innerText);
+    expect(!/\b(null|undefined|NaN)\b/.test(stray), `the page shows a programming placeholder: ${(/.{0,40}\b(null|undefined|NaN)\b.{0,20}/.exec(stray) || [''])[0]}`);
+    await p.click('#db-panel .db-close');
+    await p.focus('.db-col:last-of-type');
+    const tip = await p.evaluate(() => { const t = document.querySelector('.db-tip'); return t && !t.hidden ? t.innerText : ''; });
+    expect(/Issued\s+\d+/.test(tip) && /Accepted\s+\d+/.test(tip), `focusing a month did not show its figures: ${tip}`);
+    await p.click('#db-chart-table-btn');
+    expect(await p.evaluate(() => document.querySelectorAll('#db-chart-table tbody tr').length) === 12, 'the chart\'s table view does not list 12 months');
+    await p.fill('#f-q', 'petrakis');
+    await p.waitForFunction(() => document.querySelectorAll('#db-rows tr').length === 1, null, { timeout: 5000 }).catch(() => {});
+    expect(await p.evaluate(() => document.querySelector('#db-rows').innerText.includes('House footings in granite')), 'search did not narrow the list to one proposal');
+    expect(/q=petrakis/.test(p.url()) && /q=petrakis/.test(await p.getAttribute('#db-export', 'href')), 'the search is not kept in the address and the export link');
+    await p.fill('#f-q', '');
+    await p.selectOption('#f-state', 'followup');
+    await p.waitForTimeout(400);
+    const flagged = await p.evaluate(() => [...document.querySelectorAll('#db-rows tr')].map((r) => !!r.querySelector('.db-flag')));
+    expect(flagged.length >= 3 && flagged.every(Boolean), `"Needs a follow-up" listed ${flagged.length} rows, some without a reason`);
+    await p.selectOption('#f-state', '');
+    // Archive and restore through the page.
+    const other = await demoProposal(staff);
+    await p.goto(`${a.url}/dashboard?open=${other.id}`);
+    await p.waitForSelector('#db-archive');
+    await p.click('#db-archive');
+    await p.selectOption('#db-ar-reason', 'The client did not go ahead');
+    await p.click('.db-archive-form [type=submit]');
+    await p.waitForSelector('#db-restore', { timeout: 10000 }).catch(() => {});
+    const archivedNote = await p.evaluate(() => (document.querySelector('.db-panel-archived') || {}).innerText || '');
+    expect(/Archived .* “The client did not go ahead”/.test(archivedNote) && (await client(a).call('GET', `/api/proposal?slug=${other.slug}&t=${other.t}`)).status === 410, `archiving in the page: ${archivedNote}`);
+    await p.click('#db-restore');
+    await p.waitForSelector('#db-archive', { timeout: 10000 }).catch(() => {});
+    expect((await client(a).call('GET', `/api/proposal?slug=${other.slug}&t=${other.t}`)).status === 200, 'restoring in the page did not bring the link back');
+    expect(!problems.length, `the staff page reported: ${problems.join(' | ')}`);
+    await ctx.close();
+  }
+
+  if (fails.length) return { status: FAIL, detail: fails };
+  return { status: notes.length ? SKIP : PASS, detail: [
+    'staff only: no session is sent to sign in; viewers see everything but the client link and cannot export, archive or mark practice; the data carries no token, passphrase or content',
+    'search by any words\' beginnings (contact, service, reference), all of them; the CSV is the filtered list, formula-safe, same-site only and recorded',
+    'archiving refuses the client link with the uniform 410, takes no saves or publishing, leaves the editor\'s list and is not a withdrawal; restoring brings it all back; both are logged and audited',
+    'practice proposals leave every figure; a draft\'s listing follows its saves',
+    'in the browser: signing in lands on the dashboard; 390 wide with nothing off the edge; months focusable with their figures; a table twin; search and filters kept in the address; history; archive and restore',
+    ...notes,
   ] };
 }

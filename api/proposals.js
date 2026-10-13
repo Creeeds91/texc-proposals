@@ -1,7 +1,7 @@
 /**
  * Proposals, for staff.
  *
- *   GET  /api/proposals                         → { proposals: [...] }   (editor+)
+ *   GET  /api/proposals                         → { proposals: [...] }   (editor+; not archived)
  *   GET  /api/proposals?id=<id>                 → summary: status, link, revisions
  *   GET  /api/proposals?id=<id>&changes=1       → what publishing now would change, by section
  *   POST { action: 'create', config }           → { id }                (editor+)
@@ -11,11 +11,14 @@
  *   POST { action: 'passphrase', id }           (admin) read back, audited
  *   POST { action: 'record-acceptance', id, name, position, company, email, note }
  *                                               (admin) an acceptance received another way, audited
+ *   POST { action: 'archive', id, reason }      (editor+) file it away, audited; the link refuses until restored
+ *   POST { action: 'restore', id }              (editor+) audited
+ *   POST { action: 'practice', id, on }         (admin) leave it out of every figure, audited
  */
 import { db, rest } from '../lib/db.js';
 import { body, refuseCrossSite, onlyMethods, noStore } from '../lib/http.js';
 import { requireRole, atLeast } from '../lib/accounts.js';
-import { createProposal, publish, withdraw, rotate, readPassphrase, summary, changesSince } from '../lib/proposals.js';
+import { createProposal, publish, withdraw, rotate, readPassphrase, summary, changesSince, setArchived, setPractice } from '../lib/proposals.js';
 import { staffAccept } from '../lib/acceptances.js';
 import { UUID_RE } from '../lib/tokens.js';
 import { rateLimited, tooMany } from '../lib/ratelimit.js';
@@ -42,7 +45,7 @@ export default async function handler(req, res) {
       res.status(200).json(s);
       return;
     }
-    const r = await rest(d, 'GET', 'texc_proposals?select=id,reference,project,client_company,site_locality,status,updated_at,issued_at&order=updated_at.desc&limit=200');
+    const r = await rest(d, 'GET', 'texc_proposals?select=id,reference,project,client_company,site_locality,status,updated_at,issued_at&archived_at=is.null&order=updated_at.desc&limit=200');
     if (!r.ok) { res.status(503).json({ error: 'The list could not be loaded.' }); return; }
     res.status(200).json({ proposals: r.json });
     return;
@@ -77,6 +80,12 @@ export default async function handler(req, res) {
     return;
   }
   if (action === 'withdraw') { if (!admin()) return; answer(await withdraw(d, req, who, id, b.note)); return; }
+  if (action === 'archive' || action === 'restore') {
+    if (await rateLimited(d, req, `archive:${who.email}`, 60, 3600)) { tooMany(res); return; }
+    answer(await setArchived(d, req, who, id, action === 'archive', b.reason));
+    return;
+  }
+  if (action === 'practice') { if (!admin()) return; answer(await setPractice(d, req, who, id, b.on === true)); return; }
   if (action === 'record-acceptance') {
     if (!admin()) return;
     if (await rateLimited(d, req, `record-acceptance:${who.email}`, 10, 3600)) { tooMany(res); return; }

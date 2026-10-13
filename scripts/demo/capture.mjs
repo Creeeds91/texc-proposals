@@ -18,19 +18,24 @@
  *   demo-out/phase5/*.png            acceptance: the form, a request for changes, signing and
  *                                    accepting on a phone, the record, the emails, re-acceptance,
  *                                    an acceptance recorded by staff               (local stack)
+ *   demo-out/phase6/*.png            the dashboard on a year of fictional proposals: figures, the
+ *                                    chart, follow-ups, search, one proposal's history, archive
+ *                                    and restore, a viewer's view; a scroll video and a CSV export
+ *                                    (local stack)
  *
  *   node scripts/demo/capture.mjs              everything
  *   node scripts/demo/capture.mjs --editor     the editor captures only
  *   node scripts/demo/capture.mjs --phase3     the Phase 3 captures only
  *   node scripts/demo/capture.mjs --phase4     the Phase 4 captures only
  *   node scripts/demo/capture.mjs --phase5     the Phase 5 captures only
+ *   node scripts/demo/capture.mjs --phase6     the Phase 6 captures only
  *
  * Section stills hide the fixed furniture (top bar, rail, back-to-top) so a
  * sticky bar is never stitched into the middle of a section; the arrival shots
  * keep it. Look at every capture before sending it.
  * Exit 2 when no browser could be started.
  */
-import { mkdirSync, renameSync, rmSync, readdirSync, readFileSync, existsSync } from 'node:fs';
+import { mkdirSync, renameSync, rmSync, readdirSync, readFileSync, existsSync, copyFileSync, writeFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -638,6 +643,196 @@ async function phase5Stills() {
   return readdirSync(dir).length;
 }
 
+/**
+ * Phase 6, staff side, on a year of FICTIONAL proposals (dashboard-seed.mjs):
+ * the dashboard as it opens, the chart and its table, who needs a call, the
+ * list filtered and searched, one proposal's history, archiving — and what
+ * the editor and the client's link then do — and restoring; a viewer's
+ * read-only view; the editor's new ways in. Then the same on a phone.
+ */
+async function phase6Stills() {
+  const dir = resolve(OUT, 'phase6');
+  rmSync(dir, { recursive: true, force: true });
+  mkdirSync(dir, { recursive: true });
+  const shot = (page, name, opts = {}) => page.screenshot({ path: resolve(dir, name), ...opts });
+  const a = await localApp();
+  const { seedDashboard } = await import('./dashboard-seed.mjs');
+  const { psql } = await import('../lib/local-supabase.mjs');
+  const { ids } = seedDashboard(a.sb.conn);
+  const settle = (p, ms = 300) => p.waitForTimeout(ms);
+  const toEl = (p, sel, gap = 72) => p.evaluate(([q, g]) => { const n = document.querySelector(q); window.scrollTo(0, n.getBoundingClientRect().top + window.scrollY - g); }, [sel, gap]);
+  // The whole element, wherever it is on the page (an element screenshot can stop at the window's edge).
+  const shotEl = async (p, sel, name, pad = 16) => {
+    const r = await p.evaluate((q) => { const b = document.querySelector(q).getBoundingClientRect(); return { x: b.left, y: b.top + window.scrollY, w: b.width, h: b.height }; }, sel);
+    await shot(p, name, { fullPage: true, clip: { x: Math.max(0, r.x - pad), y: Math.max(0, r.y - pad), width: r.w + 2 * pad, height: r.h + 2 * pad } });
+  };
+  const dash = async (p, query = '') => { await p.goto(`${a.url}/dashboard${query}`); await p.waitForSelector('.db-svg'); await settle(p); };
+
+  // Before: where signing in led, and the editor's menu, until now (the Phase 3 captures, when they are here).
+  for (const [from, to] of [['phase3/1440-03-proposals-empty.png', 'before-1440-signed-in-landing.png'], ['phase3/1440-15-menu.png', 'before-1440-editor-menu.png']]) {
+    if (existsSync(resolve(OUT, from))) copyFileSync(resolve(OUT, from), resolve(dir, to));
+  }
+
+  let { ctx, page } = await signedIn(1440, 900, 1);
+  await dash(page);
+  await shot(page, '1440-01-dashboard.png');
+  // Scroll first and shoot a clip: an element screenshot would scroll after the hover and lose it.
+  await toEl(page, '.db-split', 80);
+  await page.locator('.db-col').nth(10).hover();
+  await settle(page, 150);
+  const split = await page.locator('.db-split').boundingBox();
+  await shot(page, '1440-02-chart-month-and-follow-ups.png', { clip: { x: split.x - 16, y: split.y - 16, width: split.width + 32, height: Math.min(split.height + 32, 900 - split.y) } });
+  await page.mouse.move(5, 5);
+  await page.click('#db-chart-table-btn');
+  await settle(page, 150);
+  await shotEl(page, '.db-chart', '1440-03-chart-as-a-table.png');
+  await page.click('#db-chart-table-btn');
+  await shot(page, '1440-04-full-page.png', { fullPage: true });
+  await page.selectOption('#f-state', 'followup');
+  await toEl(page, '.db-list');
+  await settle(page);
+  await shot(page, '1440-05-needs-a-follow-up.png');
+  await page.selectOption('#f-state', '');
+  await page.fill('#f-q', 'ashgrove');
+  await page.waitForFunction(() => /q=ashgrove/.test(location.search));
+  await settle(page, 400);
+  await shotEl(page, '.db-list', '1440-06-search.png');
+
+  // One proposal's whole story: changes asked for, Rev B, accepted.
+  await dash(page, `?open=${ids.latrobe}`);
+  await page.waitForSelector('.db-timeline');
+  await settle(page);
+  await shot(page, '1440-07-history.png');
+  await page.evaluate(() => { const p = document.getElementById('db-panel'); p.scrollTop = p.scrollHeight; });
+  await settle(page, 150);
+  await shot(page, '1440-08-history-continued.png');
+
+  // Archive a live one, see what that does, and restore it.
+  await dash(page, `?open=${ids.bicheno}`);
+  await page.waitForSelector('#db-archive');
+  await page.click('#db-archive');
+  await page.selectOption('#db-ar-reason', 'Awarded to another contractor');
+  await settle(page, 150);
+  await shot(page, '1440-09-archive.png');
+  await page.click('.db-archive-form [type=submit]');
+  await page.waitForSelector('#db-restore');
+  await settle(page);
+  await shot(page, '1440-10-archived.png');
+  await page.click('#db-panel .db-close');
+  await page.selectOption('#f-state', 'archived');
+  await toEl(page, '.db-list');
+  await settle(page);
+  await shot(page, '1440-11-archived-list.png');
+  await page.goto(`${a.url}/editor/${ids.bicheno}`);
+  await page.waitForSelector('dialog .ed-dialog-foot');
+  await settle(page, 500);
+  await shot(page, '1440-12-editor-on-an-archived-proposal.png');
+  const [slug, token] = psql(a.sb.conn, `select slug || ' ' || access_token from public.texc_proposals where id = '${ids.bicheno}'`).split(' ');
+  const clientCtx = await browser.newContext({ ...AU, viewport: { width: 1440, height: 900 }, reducedMotion: 'reduce' });
+  const cp = await clientCtx.newPage();
+  await cp.goto(`${a.url}/p/${slug}?t=${token}`);
+  await cp.waitForSelector('[data-gate="gone"]:not([hidden])');
+  await settle(cp, 500);
+  await cp.screenshot({ path: resolve(dir, '1440-13-client-link-while-archived.png') });
+  await clientCtx.close();
+  await dash(page, `?open=${ids.bicheno}`);
+  await page.click('#db-restore');
+  await page.waitForSelector('#db-archive');
+  await settle(page);
+  await shot(page, '1440-14-restored.png');
+
+  // The editor's ways in: the list and the menu.
+  await page.goto(`${a.url}/editor`);
+  await page.waitForSelector('dialog .ed-proposals, dialog .ed-list .ed-hint');
+  await settle(page, 400);
+  await shot(page, '1440-15-editor-list.png');
+  await page.goto(`${a.url}/editor/${ids.poatina}`);
+  await page.waitForSelector('#ed-menu');
+  await page.click('#ed-menu');
+  await settle(page, 300);
+  await shot(page, '1440-16-editor-menu.png');
+
+  // The export, as a file to open.
+  const csv = await page.evaluate(async () => (await fetch('/api/export?state=followup')).text());
+  writeFileSync(resolve(dir, 'export-needs-a-follow-up.csv'), `﻿${csv}`);
+
+  // A viewer: everything to read, nothing to change.
+  const viewerEmail = 'pat.viewer@example.com';
+  await page.evaluate(async (email) => {
+    await fetch('/api/auth?action=code', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email }) });
+    await fetch('/api/people', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, status: 'active', role: 'viewer' }) });
+  }, viewerEmail);
+  const vctx = await browser.newContext({ ...AU, viewport: { width: 1440, height: 900 }, reducedMotion: 'reduce' });
+  const vp = await vctx.newPage();
+  await vp.goto(`${a.url}/signin`);
+  await vp.fill('#email', viewerEmail);
+  await vp.click('#email-form button');
+  await vp.waitForSelector('[data-step="code"]:not([hidden])');
+  await vp.fill('#code', a.codeFor(a.outbox(), viewerEmail));
+  await vp.click('#code-form button');
+  await vp.waitForURL((u) => u.pathname === '/dashboard');
+  await vp.waitForSelector('.db-svg');
+  await settle(vp);
+  await vp.screenshot({ path: resolve(dir, '1440-17-viewer-signed-in.png') });
+  await vp.goto(`${a.url}/dashboard?open=${ids.stanley}`);
+  await vp.waitForSelector('.db-timeline');
+  await settle(vp);
+  await vp.screenshot({ path: resolve(dir, '1440-18-viewer-history.png') });
+  await vctx.close();
+  const state = await ctx.storageState();
+  await ctx.close();
+
+  // A scroll through the whole page.
+  const vdir = resolve(OUT, 'video-tmp');
+  rmSync(vdir, { recursive: true, force: true });
+  const rctx = await browser.newContext({ ...AU, viewport: { width: 1440, height: 900 }, storageState: state, recordVideo: { dir: vdir, size: { width: 1440, height: 900 } } });
+  const rp = await rctx.newPage();
+  await dash(rp);
+  await rp.waitForTimeout(1200);
+  const total = await rp.evaluate(() => document.documentElement.scrollHeight - window.innerHeight);
+  for (let y = 0; y < total; y += 36) { await rp.evaluate((top) => window.scrollTo(0, top), y); await rp.waitForTimeout(64); }
+  await rp.waitForTimeout(1200);
+  await rctx.close();
+  const webm = readdirSync(vdir).find((f) => f.endsWith('.webm'));
+  renameSync(resolve(vdir, webm), resolve(dir, 'dashboard-scroll-1440.webm'));
+  rmSync(vdir, { recursive: true, force: true });
+  spawnSync('ffmpeg', ['-y', '-loglevel', 'error', '-i', resolve(dir, 'dashboard-scroll-1440.webm'), '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', resolve(dir, 'dashboard-scroll-1440.mp4')]);
+
+  // On a phone.
+  const pctx = await browser.newContext({ ...AU, viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, reducedMotion: 'reduce', storageState: state });
+  const pp = await pctx.newPage();
+  await dash(pp);
+  await shot(pp, '390-01-dashboard.png');
+  await toEl(pp, '.db-chart');
+  await pp.locator('.db-col').nth(10).focus();
+  await settle(pp, 150);
+  await shot(pp, '390-02-chart.png');
+  await pp.locator('.db-col').nth(10).blur();
+  await toEl(pp, '.db-follow');
+  await settle(pp, 150);
+  await shot(pp, '390-03-follow-ups.png');
+  await toEl(pp, '.db-list');
+  await settle(pp, 150);
+  await shot(pp, '390-04-list.png');
+  await toEl(pp, '#db-rows tr:nth-child(2)', 64);
+  await settle(pp, 150);
+  await shot(pp, '390-05-list-cards.png');
+  await dash(pp, `?open=${ids.latrobe}`);
+  await pp.waitForSelector('.db-timeline');
+  await settle(pp);
+  await shot(pp, '390-06-history.png');
+  await pp.evaluate(() => { const p = document.getElementById('db-panel'); p.scrollTop = p.scrollHeight; });
+  await settle(pp, 150);
+  await shot(pp, '390-07-history-continued.png');
+  await dash(pp, `?open=${ids.wilmot}`);
+  await pp.click('#db-archive');
+  await pp.selectOption('#db-ar-reason', 'The client did not go ahead');
+  await settle(pp, 150);
+  await shot(pp, '390-08-archive.png');
+  await pctx.close();
+  return readdirSync(dir).length;
+}
+
 async function pdf() {
   const page = await browser.newPage({ ...AU, viewport: { width: 1200, height: 900 }, reducedMotion: 'reduce' });
   await ready(page);
@@ -657,6 +852,8 @@ try {
     console.log(`demo-out/phase4/: ${await phase4Stills()} captures`);
   } else if (process.argv.includes('--phase5')) {
     console.log(`demo-out/phase5/: ${await phase5Stills()} captures`);
+  } else if (process.argv.includes('--phase6')) {
+    console.log(`demo-out/phase6/: ${await phase6Stills()} files`);
   } else {
     const desk = await stills(1440, 900, 1);
     const phone = await stills(390, 844, 2);
@@ -667,7 +864,8 @@ try {
     const p3 = await phase3Stills();
     const p4 = await phase4Stills();
     const p5 = await phase5Stills();
-    console.log(`demo-out/: ${desk} sections at 1440, ${phone} at 390, arrival shots, two scroll videos, A4 PDF, ${e} editor, ${p3} Phase 3, ${p4} Phase 4 and ${p5} Phase 5 captures`);
+    const p6 = await phase6Stills();
+    console.log(`demo-out/: ${desk} sections at 1440, ${phone} at 390, arrival shots, two scroll videos, A4 PDF, ${e} editor, ${p3} Phase 3, ${p4} Phase 4, ${p5} Phase 5 captures and ${p6} Phase 6 files`);
   }
 } finally {
   await browser.close();

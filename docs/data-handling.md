@@ -16,7 +16,11 @@ change it in the same commit as anything it describes.
 | Requests for changes | `texc_events` (`changes_requested`): name, email and message as typed | The server; staff; the office by email |
 | Staff accounts | `texc_users` (email, name, role, status) | The server; administrators in People |
 | Sign-in codes and sessions | `texc_login_tokens`, `texc_user_sessions`: SHA-256 hashes only | Nobody can recover a code or a session from them |
-| What clients did (opened, ticked an option, printed, opened or downloaded a document) | `texc_events`, `texc_proposal_views`: device family, region, a keyed hash of the IP — never the address | The server; staff (the archive, Phase 6) |
+| What clients did (opened, ticked an option, printed, opened or downloaded a document) | `texc_events`, `texc_proposal_views`: device family, region, a keyed hash of the IP — never the address | The server; staff on the dashboard (any role) |
+| Archive state and practice flag | `texc_proposals.archived_at`, `archived_by`, `archive_reason`, `is_test`; each change also in `texc_events` and the staff audit | The server; staff on the dashboard |
+| Search words | `texc_proposals.search_extra` (document type, service names, the contact's name, document titles) and the generated `search` column | The server only; staff see the results |
+| The dashboard's data | Read live through `texc_overview()`: per proposal, its listing, dates, value, counts of opens, sessions, documents opened and items ticked, acceptance facts and the contact's name. No link token, passphrase or proposal content | Staff, any role; the client link only to editors and above |
+| CSV exports | Not stored: built on request from the same data and downloaded. Each export is written to `texc_staff_audit` (who, filters, row count) before the file is sent | Editors and above. A downloaded copy is outside this system's control |
 | Who on the staff side did something sensitive | `texc_staff_audit`, append-only | The server; Brand in Black |
 
 The database has row-level security on every table and no policies, so the

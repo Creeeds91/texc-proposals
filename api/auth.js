@@ -35,7 +35,7 @@ const VERIFY_PER_CALLER = 30;
 const CODE_FLOOR_MS = 1800;
 const floor = (start) => new Promise((done) => setTimeout(done, Math.max(0, CODE_FLOOR_MS - (Date.now() - start))));
 
-const safeNext = (n) => (typeof n === 'string' && /^\/(editor(\/[0-9a-f-]{36})?|staff\/acceptance\/[0-9a-f-]{36})$/.test(n) ? n : '/editor');
+const safeNext = (n) => (typeof n === 'string' && /^\/(dashboard|editor(\/[0-9a-f-]{36})?|staff\/acceptance\/[0-9a-f-]{36})$/.test(n) ? n : '/dashboard');
 
 export default async function handler(req, res) {
   noStore(res);

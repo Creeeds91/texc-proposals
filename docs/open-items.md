@@ -61,8 +61,19 @@ answered, and say where the answer came from.
 | D5 | Vercel serves `/assets/vendor/` with `WORKER_CSP` and the pdf.js worker runs under it (if a browser applies the page's policy to the worker instead, pdf.js falls back to plain scripts for JPEG 2000 and colour) | Prove on the first preview deployment: open a document, no CSP errors in the console |
 | Q7 | Online acceptance before T&Cs; signature type; adviser wording | Built as recommended: acceptance works without T&Cs (the sentence leaves terms out), drawn or typed signature (per proposal). **The adviser's wording (C25) is still needed before the first live proposal** |
 | C38 | Wording drafted by Brand in Black for acceptance, not yet approved by TEXC: "Planning and site preparation can begin once this is accepted", "Hold point HP1 is met", the request-changes form, the acceptance and changes emails, and the acceptance record's headings | Open — TEXC to approve before the first live proposal |
+| C39 | Dashboard defaults chosen by Brand in Black: follow-up after 5 days unopened, 3 days quiet, 7 days before valid-until; the archive reasons offered (did not go ahead, awarded to another contractor, work completed, duplicate or sent in error, practice or test, something else); the financial year as the default period | Open — George to confirm or change (each is one line in `assets/js/lifecycle.js` or `assets/js/dashboard.js`) |
 | Q6 | Malware scanning | Option A built (staff-only uploads plus the structural check). Option B (ClamAV in Sydney) only if clients ever upload |
 | Q4–Q15 | See `docs/architecture.md` §10. Recommendations were approved with the plan | Approved as recommended |
+
+## Phase 6 notes
+
+- **Signing in now lands on the dashboard.** The editor is one click away (Editor, or New proposal); the editor's list has a way back.
+- **Archiving is not withdrawing, and not deleting.** It files a proposal away with a reason. While archived its link does not open for the client, and nothing can be changed or published on it; Restore undoes all of that. Withdraw (administrators, in the editor) is still how a proposal is taken back from a client on purpose.
+- **Win rate is "of what we sent in the period, how much has been accepted so far"**, leaving out withdrawn proposals. Recent periods read low until clients have had time to decide.
+- **Values are ex GST and priced items only.** Items "at cost" have no amount to add.
+- **Practice proposals**: an administrator can mark one so it never counts in the figures or follow-ups (for training, or a test sent to ourselves).
+- **The CSV export is recorded** (who, when, which filters, how many rows). It holds client names and contacts: treat a downloaded copy as TEXC's business records.
+- **Purging** an archived proposal (super only, 90 days after archive) is Phase 7.
 
 ## Phase 5 notes
 
