@@ -69,8 +69,8 @@ html.ed-collapsed .ed { display: none; }
 .ed-badge { flex: none; font-size: 11px; padding: 2px 8px; border-radius: var(--radius-pill); background: var(--ink-800); color: var(--steel-300); white-space: nowrap; }
 .ed-badge[data-tone="bad"] { background: var(--stop); color: var(--white); }
 .ed-badge[data-tone="warn"] { background: var(--caution); color: var(--ink); }
-.ed-badge[data-tone="ok"] { color: var(--go); }
-.ed-badge[data-tone="ok"]::before { content: "✓ "; }
+/* The words stay in the badge's readable grey; only the tick carries the green. */
+.ed-badge[data-tone="ok"]::before { content: "✓ "; color: var(--go); }
 .ed-chev { width: 14px; height: 14px; color: var(--steel-400); transition: transform var(--dur-base) var(--ease-standard); }
 .ed-panel-toggle[aria-expanded="true"] .ed-chev { transform: rotate(180deg); }
 .ed-switch { flex: none; appearance: none; width: 38px; height: 22px; border-radius: var(--radius-pill); background: var(--ink-600); position: relative; cursor: pointer; margin: 0; transition: background var(--dur-base) var(--ease-standard); }

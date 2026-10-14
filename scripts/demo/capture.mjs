@@ -22,6 +22,8 @@
  *                                    chart, follow-ups, search, one proposal's history, archive
  *                                    and restore, a viewer's view; a scroll video and a CSV export
  *                                    (local stack)
+ *   demo-out/phase7/*.png            deleting for good (when it can, cannot, and the way in),
+ *                                    page not found, the phone's top bar        (local stack)
  *
  *   node scripts/demo/capture.mjs              everything
  *   node scripts/demo/capture.mjs --editor     the editor captures only
@@ -29,6 +31,7 @@
  *   node scripts/demo/capture.mjs --phase4     the Phase 4 captures only
  *   node scripts/demo/capture.mjs --phase5     the Phase 5 captures only
  *   node scripts/demo/capture.mjs --phase6     the Phase 6 captures only
+ *   node scripts/demo/capture.mjs --phase7     the Phase 7 captures only
  *
  * Section stills hide the fixed furniture (top bar, rail, back-to-top) so a
  * sticky bar is never stitched into the middle of a section; the arrival shots
@@ -833,6 +836,67 @@ async function phase6Stills() {
   return readdirSync(dir).length;
 }
 
+/**
+ * Phase 7, as Brand in Black meets it: deleting an archived proposal for good
+ * — not yet (archived less than 90 days ago), never (it was accepted), and the
+ * way in, typing the reference — then the list without it; and "page not
+ * found" on desktop and phone.
+ */
+async function phase7Stills() {
+  const dir = resolve(OUT, 'phase7');
+  rmSync(dir, { recursive: true, force: true });
+  mkdirSync(dir, { recursive: true });
+  const shot = (page, name, opts = {}) => page.screenshot({ path: resolve(dir, name), ...opts });
+  const a = await localApp();
+  const { seedDashboard } = await import('./dashboard-seed.mjs');
+  const { psql } = await import('../lib/local-supabase.mjs');
+  const { ids } = seedDashboard(a.sb.conn);
+  const settle = (p, ms = 300) => p.waitForTimeout(ms);
+  const dash = async (p, query = '') => { await p.goto(`${a.url}/dashboard${query}`); await p.waitForSelector('.db-svg'); await settle(p); };
+  // Huon Pipeline was archived 80 days ago in the seed: move it past 90. Ridgeway (accepted) is archived long ago.
+  psql(a.sb.conn, `update public.texc_proposals set archived_at = now() - interval '120 days' where id = '${ids.huonville}'`);
+  psql(a.sb.conn, `update public.texc_proposals set archived_at = now() - interval '200 days', archived_by = 'office@example.com', archive_reason = 'Work completed' where id = '${ids.ridgeway}'`);
+
+  const { ctx, page } = await signedIn(1440, 900, 1);
+  await dash(page, `?open=${ids.sorell}`);
+  await page.waitForSelector('.db-timeline');
+  await settle(page);
+  await shot(page, '1440-01-not-yet.png');
+  await dash(page, `?open=${ids.ridgeway}`);
+  await page.waitForSelector('.db-timeline');
+  await settle(page);
+  await shot(page, '1440-02-accepted-is-kept.png');
+  await dash(page, `?open=${ids.huonville}`);
+  await page.waitForSelector('#db-purge');
+  await settle(page);
+  await shot(page, '1440-03-can-delete.png');
+  await page.click('#db-purge');
+  const ref = psql(a.sb.conn, `select reference from public.texc_proposals where id = '${ids.huonville}'`);
+  await page.fill('#db-purge-confirm', ref.slice(0, -1));
+  await page.click('.db-archive-form [type=submit]');
+  await settle(page, 200);
+  await shot(page, '1440-04-type-the-reference.png');
+  await page.fill('#db-purge-confirm', ref);
+  await page.click('.db-archive-form [type=submit]');
+  await page.waitForFunction(() => !document.getElementById('db-panel').open);
+  await page.selectOption('#f-state', 'archived');
+  await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+  await settle(page);
+  await shot(page, '1440-05-deleted.png');
+  await ctx.close();
+
+  for (const [w, h, s] of [[1440, 900, 1], [390, 844, 2]]) {
+    const c = await browser.newContext({ ...AU, viewport: { width: w, height: h }, deviceScaleFactor: s, reducedMotion: 'reduce' });
+    const p = await c.newPage();
+    await p.goto(`${a.url}/no-such-page`);
+    await p.waitForSelector('.gate-title');
+    await settle(p, 400);
+    await p.screenshot({ path: resolve(dir, `${w}-06-page-not-found.png`) });
+    await c.close();
+  }
+  return readdirSync(dir).length;
+}
+
 async function pdf() {
   const page = await browser.newPage({ ...AU, viewport: { width: 1200, height: 900 }, reducedMotion: 'reduce' });
   await ready(page);
@@ -854,6 +918,8 @@ try {
     console.log(`demo-out/phase5/: ${await phase5Stills()} captures`);
   } else if (process.argv.includes('--phase6')) {
     console.log(`demo-out/phase6/: ${await phase6Stills()} files`);
+  } else if (process.argv.includes('--phase7')) {
+    console.log(`demo-out/phase7/: ${await phase7Stills()} captures`);
   } else {
     const desk = await stills(1440, 900, 1);
     const phone = await stills(390, 844, 2);
@@ -865,7 +931,8 @@ try {
     const p4 = await phase4Stills();
     const p5 = await phase5Stills();
     const p6 = await phase6Stills();
-    console.log(`demo-out/: ${desk} sections at 1440, ${phone} at 390, arrival shots, two scroll videos, A4 PDF, ${e} editor, ${p3} Phase 3, ${p4} Phase 4, ${p5} Phase 5 captures and ${p6} Phase 6 files`);
+    const p7 = await phase7Stills();
+    console.log(`demo-out/: ${desk} sections at 1440, ${phone} at 390, arrival shots, two scroll videos, A4 PDF, ${e} editor, ${p3} Phase 3, ${p4} Phase 4, ${p5} Phase 5 captures, ${p6} Phase 6 files and ${p7} Phase 7 captures`);
   }
 } finally {
   await browser.close();

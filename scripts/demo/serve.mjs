@@ -8,9 +8,12 @@
  *   node scripts/demo/serve.mjs [--port 4310]
  *   then open http://127.0.0.1:4310/demo
  *
- * Exported as startServer() for the capture and check scripts.
+ * Text is compressed as Vercel compresses it (Brotli, else gzip, when the
+ * browser asks), so byte budgets and Lighthouse measure what a phone would
+ * download. Exported as startServer() for the capture and check scripts.
  */
 import { createServer } from 'node:http';
+import { brotliCompressSync, gzipSync, constants as Z } from 'node:zlib';
 import { readFileSync, existsSync, statSync } from 'node:fs';
 import { resolve, dirname, extname, normalize, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -45,13 +48,22 @@ export function startServer({ port = 4310, overrides = {} } = {}) {
     const file = resolve(ROOT, rel);
     const allowed = PUBLIC.some((p) => rel === p || rel.startsWith(p));
     if (!allowed || !file.startsWith(ROOT + sep) || !existsSync(file) || statSync(file).isDirectory()) {
+      // As Vercel does: the static 404 page, with a 404 status.
       res.statusCode = 404;
-      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-      res.end('Not found');
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.end(readFileSync(resolve(ROOT, 'views/404.html')));
       return;
     }
-    res.setHeader('Content-Type', TYPES[extname(file)] || 'application/octet-stream');
-    res.end(readFileSync(file));
+    const type = TYPES[extname(file)] || 'application/octet-stream';
+    res.setHeader('Content-Type', type);
+    let bytes = readFileSync(file);
+    const accepts = String(req.headers['accept-encoding'] || '');
+    if (/^(text\/|application\/json|image\/svg)/.test(type) && bytes.length > 1024) {
+      if (/\bbr\b/.test(accepts)) { bytes = brotliCompressSync(bytes, { params: { [Z.BROTLI_PARAM_QUALITY]: 5 } }); res.setHeader('Content-Encoding', 'br'); }
+      else if (/\bgzip\b/.test(accepts)) { bytes = gzipSync(bytes); res.setHeader('Content-Encoding', 'gzip'); }
+      res.setHeader('Vary', 'Accept-Encoding');
+    }
+    res.end(bytes);
   });
   return new Promise((done) => server.listen(port, '127.0.0.1', () => done(server)));
 }

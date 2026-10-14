@@ -20,7 +20,7 @@
  * so callers can report NOT CHECKED rather than pass.
  */
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync, readdirSync, statSync } from 'node:fs';
 import { createServer, request as httpRequest } from 'node:http';
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { tmpdir } from 'node:os';
@@ -55,7 +55,8 @@ function ensureDocker() {
   if (spawnSync('docker', ['info'], { encoding: 'utf8' }).status === 0) return true;
   if (!existsSync('/usr/bin/dockerd')) return false;
   spawnSync('sh', ['-c', 'nohup dockerd >/tmp/dockerd.log 2>&1 &']);
-  for (let i = 0; i < 40; i += 1) {
+  // A cold container can take well over 20 seconds to bring the daemon up.
+  for (let i = 0; i < 180; i += 1) {
     if (spawnSync('docker', ['info'], { encoding: 'utf8' }).status === 0) return true;
     spawnSync('sleep', ['0.5']);
   }
@@ -220,6 +221,7 @@ async function gatewayHandle(req, res, ctx) {
  *   PUT  /storage/v1/object/upload/sign/<bucket>/<path>?token=…   the browser's upload, no key
  *   GET  /storage/v1/object/authenticated/<bucket>/<path>   the bytes, with the secret key
  *   DELETE /storage/v1/object/<bucket>           { prefixes }
+ *   POST /storage/v1/object/list/<bucket>        { prefix, limit, offset } → one level: files, and folders with id null
  * Buckets are private: there is no unsigned read. Each bucket's size and type
  * limits are enforced as supabase/schema.sql sets them.
  */
@@ -288,6 +290,18 @@ async function storageHandle(req, res, url, ctx) {
     res.writeHead(200, { 'content-type': readFileSync(file + '.type', 'utf8') });
     res.end(readFileSync(file));
     return;
+  }
+  if (req.method === 'POST' && parts[0] === 'list') {
+    const bucket = parts[1];
+    const body = JSON.parse((await readAll(req)).toString() || '{}');
+    const prefix = String(body.prefix || '').replace(/\/+$/, '');
+    if (!BUCKETS.has(bucket) || (prefix && !safePath(prefix))) return send(400, { message: 'Invalid list' });
+    const dirPath = join(ctx.store, bucket, prefix);
+    if (!existsSync(dirPath) || !statSync(dirPath).isDirectory()) return send(200, []);
+    const items = readdirSync(dirPath).filter((n) => !n.endsWith('.type')).sort()
+      .map((n) => { const st = statSync(join(dirPath, n)); return st.isDirectory() ? { name: n, id: null } : { name: n, id: `local-${n}`, created_at: st.birthtime.toISOString(), metadata: { size: st.size } }; });
+    const offset = Number(body.offset) || 0;
+    return send(200, items.slice(offset, offset + (Number(body.limit) || 100)));
   }
   const bucket = parts[0];
   const path = parts.slice(1).join('/');

@@ -201,9 +201,31 @@ added later is appended with `alter table … add column`, never tidied into the
 - After any change here run `check.mjs lifecycle schema dashboard` and
   `node scripts/demo/capture.mjs --phase6`, and look at the captures.
 
+## Hardening (Phase 7)
+
+`docs/architecture.md` §18 is the record; `docs/handover.md` the go-live.
+
+- **Deleting is `texc_purge()` and nothing else**: Brand in Black only, 90
+  days after archiving, never an accepted proposal, by typing the reference,
+  audited before anything goes. Never set `texc.purge` anywhere else.
+- **The PDF check fails closed.** Anything a reader might read differently
+  (repeated keys, comments, abbreviated keys, decode parameters, a stream it
+  cannot place) is "cannot verify". Never loosen a rule to let a file
+  through; every bypass found is a fixture in `scripts/lib/pdf-fixtures.mjs`
+  and `check.mjs attachments` holds them.
+- **A stored document's path carries its whole SHA-256**, and nothing deletes
+  a stored file a record points at. A file being checked is claimed first.
+- **Accessibility and speed are checked, not hoped for**: `check.mjs a11y`
+  (axe-core, WCAG 2.2 AA, every page, 1440 and 390), `lighthouse` (phone,
+  at least 95), `budget` (200 KB before photographs). The tools live outside
+  the repo (`scripts/lib/audit-tools.mjs`); without them those suites report
+  NOT CHECKED.
+- After any change to the client page run `check.mjs render print a11y budget
+  lighthouse`; after any change to the staff pages, `a11y`.
+
 ## Generated files
 
-`views/*.html`, `lib/editor-html.js`, `lib/signin-html.js`, `lib/dashboard-html.js`,
+`views/*.html` (404 included), `lib/editor-html.js`, `lib/signin-html.js`, `lib/dashboard-html.js`,
 `lib/template-data.js` and `lib/demo-fixture.js` are built by
 `node scripts/build.mjs`. Never hand-edit them. `public/` (what Vercel serves)
 is written by `--public` and is git-ignored. The build is deterministic: a

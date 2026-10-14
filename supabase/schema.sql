@@ -338,6 +338,12 @@ begin
   if next_index <> (p->>'rev_index')::integer then
     raise exception 'conflict: another revision was published' using errcode = 'PT409';
   end if;
+  -- The caller checked whether the current revision was accepted (publishing
+  -- over an acceptance needs acknowledging); if a client accepted since, stop.
+  if p ? 'current_accepted' and exists (select 1 from public.texc_acceptances where revision_id = prop.current_revision_id)
+     is distinct from (p->>'current_accepted')::boolean then
+    raise exception 'conflict: accepted meanwhile' using errcode = 'PT409';
+  end if;
   -- The link and passphrase are set once, on first issue, and only rotated on purpose.
   if prop.access_token is not null and prop.access_token is distinct from p->>'access_token' then
     raise exception 'conflict: link' using errcode = 'PT409';
@@ -711,6 +717,64 @@ returns jsonb language sql stable security definer set search_path = '' as $$
   ) o
 $$;
 
+-- ---------------------------------------------------------------- hardening (Phase 7)
+
+-- An archived proposal takes no saves, in the database as well as on the
+-- server: the server checks first, and this closes the moment between its
+-- check and its write.
+create or replace function public.texc_drafts_guard() returns trigger
+language plpgsql set search_path = '' as $$
+begin
+  if exists (select 1 from public.texc_proposals where id = new.proposal_id and archived_at is not null) then
+    raise exception 'conflict: archived' using errcode = 'PT409';
+  end if;
+  return new;
+end $$;
+drop trigger if exists texc_drafts_guard on public.texc_drafts;
+create trigger texc_drafts_guard before update on public.texc_drafts
+  for each row execute function public.texc_drafts_guard();
+
+-- ---------------------------------------------------------------- purge (Phase 7)
+
+-- The one door through the append-only and immutability triggers: delete an
+-- archived proposal and everything that hangs off it, for good. Only when it
+-- has been archived for 90 days, and never once it has been accepted (an
+-- acceptance is a business record and is kept). The caller (lib/purge.js)
+-- has checked the person is Brand in Black, recorded the deletion in the
+-- staff audit first, and removes the stored files once this commits. The
+-- transaction-local flag dies with the transaction; nothing else can set it.
+create or replace function public.texc_purge(p jsonb)
+returns jsonb language plpgsql security definer set search_path = '' as $$
+declare
+  prop public.texc_proposals%rowtype;
+  counts jsonb;
+begin
+  select * into prop from public.texc_proposals where id = (p->>'proposal_id')::uuid for update;
+  if not found then raise exception 'no such proposal' using errcode = 'PT404'; end if;
+  if prop.archived_at is null then raise exception 'conflict: not archived' using errcode = 'PT409'; end if;
+  if prop.archived_at > now() - interval '90 days' then raise exception 'conflict: archived less than 90 days ago' using errcode = 'PT409'; end if;
+  if exists (select 1 from public.texc_acceptances where proposal_id = prop.id) then
+    raise exception 'conflict: accepted proposals are kept' using errcode = 'PT409';
+  end if;
+  if prop.reference is distinct from nullif(p->>'reference', '') then raise exception 'conflict: reference' using errcode = 'PT409'; end if;
+  counts := jsonb_build_object(
+    'revisions', (select count(*) from public.texc_proposal_revisions where proposal_id = prop.id),
+    'events', (select count(*) from public.texc_events where proposal_id = prop.id),
+    'views', (select count(*) from public.texc_proposal_views where proposal_id = prop.id),
+    'files', (select count(*) from public.texc_attachments where proposal_id = prop.id));
+  perform set_config('texc.purge', 'on', true);
+  delete from public.texc_drafts where proposal_id = prop.id;
+  update public.texc_proposals set current_revision_id = null, accepted_revision_id = null where id = prop.id;
+  delete from public.texc_revision_keys where revision_id in (select id from public.texc_proposal_revisions where proposal_id = prop.id);
+  delete from public.texc_events where proposal_id = prop.id;
+  delete from public.texc_proposal_views where proposal_id = prop.id;
+  delete from public.texc_attachments where proposal_id = prop.id;
+  delete from public.texc_proposal_revisions where proposal_id = prop.id;
+  delete from public.texc_proposals where id = prop.id;
+  perform set_config('texc.purge', 'off', true);
+  return counts;
+end $$;
+
 -- ---------------------------------------------------------------- locked down from birth
 
 do $$
@@ -731,7 +795,7 @@ begin
   foreach f in array array['texc_touch_updated_at()', 'texc_refuse_change()', 'texc_revisions_guard()',
     'texc_rate_hit(text, integer, integer)', 'texc_claim_reference(uuid, text)', 'texc_publish(jsonb)',
     'texc_rotate(jsonb)', 'texc_withdraw(uuid, text, text)', 'texc_record_view(jsonb)', 'texc_accept(jsonb)',
-    'texc_set_archived(jsonb)', 'texc_search(text)', 'texc_overview(jsonb)'] loop
+    'texc_set_archived(jsonb)', 'texc_search(text)', 'texc_overview(jsonb)', 'texc_purge(jsonb)', 'texc_drafts_guard()'] loop
     execute format('revoke execute on function public.%s from public, anon, authenticated', f);
     execute format('grant execute on function public.%s to service_role', f);
   end loop;

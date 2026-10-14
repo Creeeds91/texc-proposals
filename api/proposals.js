@@ -14,12 +14,15 @@
  *   POST { action: 'archive', id, reason }      (editor+) file it away, audited; the link refuses until restored
  *   POST { action: 'restore', id }              (editor+) audited
  *   POST { action: 'practice', id, on }         (admin) leave it out of every figure, audited
+ *   POST { action: 'purge', id, confirm }       (super) delete an archived proposal for good, 90 days
+ *                                               after archiving, never once accepted (lib/purge.js)
  */
 import { db, rest } from '../lib/db.js';
 import { body, refuseCrossSite, onlyMethods, noStore } from '../lib/http.js';
 import { requireRole, atLeast } from '../lib/accounts.js';
 import { createProposal, publish, withdraw, rotate, readPassphrase, summary, changesSince, setArchived, setPractice } from '../lib/proposals.js';
 import { staffAccept } from '../lib/acceptances.js';
+import { purge } from '../lib/purge.js';
 import { UUID_RE } from '../lib/tokens.js';
 import { rateLimited, tooMany } from '../lib/ratelimit.js';
 
@@ -86,6 +89,11 @@ export default async function handler(req, res) {
     return;
   }
   if (action === 'practice') { if (!admin()) return; answer(await setPractice(d, req, who, id, b.on === true)); return; }
+  if (action === 'purge') {
+    if (await rateLimited(d, req, `purge:${who.email}`, 10, 3600)) { tooMany(res); return; }
+    answer(await purge(d, req, who, id, b.confirm));
+    return;
+  }
   if (action === 'record-acceptance') {
     if (!admin()) return;
     if (await rateLimited(d, req, `record-acceptance:${who.email}`, 10, 3600)) { tooMany(res); return; }

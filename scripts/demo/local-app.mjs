@@ -127,7 +127,12 @@ export async function startLocalApp({ port = 4400, keep = false, dir } = {}) {
       }
       const rel = normalize(path).replace(/^[/\\]+/, '');
       const file = resolve(pub, rel);
-      if (!file.startsWith(pub + sep) || !existsSync(file) || statSync(file).isDirectory()) { res.statusCode = 404; res.end('Not found'); return; }
+      if (!file.startsWith(pub + sep) || !existsSync(file) || statSync(file).isDirectory()) {
+        res.statusCode = 404;
+        res.setHeader('Content-Type', 'text/html; charset=utf-8');
+        res.end(readFileSync(resolve(pub, '404.html')));
+        return;
+      }
       res.setHeader('Content-Type', TYPES[extname(file)] || 'application/octet-stream');
       res.end(readFileSync(file));
     } catch (e) {

@@ -179,6 +179,8 @@ body.db { background: var(--paper); color: var(--ink); min-height: 100vh; }
 .db-tl-meta { color: var(--ink-on-paper-muted); font-size: var(--text-xs); overflow-wrap: anywhere; }
 .db-tl-more { display: block !important; }
 .db-archive-form { display: grid; gap: var(--space-3); }
+[data-surface="paper"] .btn--secondary.db-danger { color: var(--stop); border-color: var(--stop); }
+[data-surface="paper"] .btn--secondary.db-danger:hover { color: var(--white); background: var(--stop); }
 .db-archive-form .db-h4 { margin-top: 0; }
 
 /* ---- toast ------------------------------------------------------------------ */

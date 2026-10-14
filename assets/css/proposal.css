@@ -304,7 +304,16 @@ html.sheet-open { overflow: hidden; }
 
 /* ---- Sections (texc Band.tsx) ------------------------------------------ */
 
-.sec { position: relative; padding: clamp(64px, 9vw, 112px) 0; scroll-margin-top: var(--topbar-h); }
+/* Anchors land below the sticky bar through the page's scroll-padding (html, above); a
+   scroll-margin here as well used to drop every section a whole bar too low. */
+.sec { position: relative; padding: clamp(64px, 9vw, 112px) 0; }
+/* The demo fills itself in from a file after the first paint; until then it
+   shows nothing, rather than the built-in wording jumping to the demo's. */
+html[data-boot="fixture"]:not(.ready) #main, html[data-boot="fixture"]:not(.ready) .topbar-title { visibility: hidden; }
+/* A long proposal is laid out as it is read: a section off screen is skipped
+   until it comes near, and keeps the size it last had. Printing lays out all. */
+.sec:not(#cover) { content-visibility: auto; contain-intrinsic-size: auto 1200px; }
+@media print { .sec:not(#cover) { content-visibility: visible; contain-intrinsic-size: none; } }
 .sec::before { content: ""; position: absolute; inset: 0 0 auto 0; height: 2px; background: var(--gold-gradient-h); z-index: 6; }
 .sec[data-surface="ink"] { background: var(--ink); color: var(--white); }
 .sec[data-surface="raised"] { background: var(--ink-800); color: var(--white); }
@@ -849,7 +858,9 @@ mark.confirm { background: var(--stop); color: var(--white); font-family: var(--
 @media (max-width: 640px) {
   .topbar-in { gap: var(--space-3); }
   .topbar-logo img { height: 28px; }
-  .topbar-rule, .topbar-print span, .topbar-actions .chip { display: none; }
+  .topbar-rule, .topbar-actions .chip { display: none; }
+  /* The words stay for screen readers when the button shrinks to its icon. */
+  .topbar-print span { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
   .topbar-print { width: 36px; padding: 0; }
   .topbar-sections { padding: 0 12px; }
   .topbar-project { font-size: 12px; }

@@ -277,5 +277,13 @@ export function facets(rows) {
   return { regions: [...regions].sort(), services: [...services].sort() };
 }
 
+/* ------------------------------------------------------------------ deleting for good */
+
+/** An archived proposal can be deleted permanently (by Brand in Black) this many days after archiving. The database holds the same number. */
+export const PURGE_AFTER_DAYS = 90;
+
+/** The first instant it may be deleted, or null while it is not archived. */
+export const purgeableFrom = (r) => (r && r.archived_at ? new Date(new Date(r.archived_at).getTime() + PURGE_AFTER_DAYS * DAY) : null);
+
 /** The name a row is shown by: its project, or what it is while it has none. */
 export const titleOf = (r) => r.project || (r.reference ? `Proposal ${r.reference}` : 'Untitled draft');

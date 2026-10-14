@@ -65,6 +65,15 @@ answered, and say where the answer came from.
 | Q6 | Malware scanning | Option A built (staff-only uploads plus the structural check). Option B (ClamAV in Sydney) only if clients ever upload |
 | Q4–Q15 | See `docs/architecture.md` §10. Recommendations were approved with the plan | Approved as recommended |
 
+## Phase 7 notes
+
+- **Go-live is `docs/handover.md`**: what must be settled first, how to put it online, how to look after it. The staff guide is `docs/editor-guide.md` (and a printable PDF from `node scripts/demo/guide.mjs`).
+- **Two independent security reviews (14 Oct 2026)** of the attachment, acceptance and dashboard code, then of the fixes and the purge. Fixed: a document's stored path now carries its whole fingerprint, so one file's path can never be named for another's (the first review showed an editor could have swapped the file behind an issued revision); the PDF check now fails closed on anything a PDF reader might read differently from it (fourteen ways a script could once pass are now fixtures); the check's ASCII85 decoding is bounded; archived proposals refuse saves in the database and refuse document and photograph changes; a client accepting while someone publishes is caught; uploads begun and never checked are capped and cleared without ever touching a file being checked. The purge was found sound.
+- **Accessibility**: axe-core finds no WCAG 2.2 A or AA problem on any page a person meets, at desktop and phone width. **Speed**: Lighthouse on a phone profile scores performance 99, accessibility 100, best practices 100; the client page downloads about 60 KB before photographs (budget 200 KB).
+- **Two small changes on the client page**: off-screen sections are laid out only as they come near (faster on phones; printing still lays out everything), and a jump from the section index now lands just under the top bar rather than a bar's height lower.
+- **A styled "page not found"** answers any address that is not a page.
+- **Accepted limits** are listed in `docs/handover.md` §5.
+
 ## Phase 6 notes
 
 - **Signing in now lands on the dashboard.** The editor is one click away (Editor, or New proposal); the editor's list has a way back.
@@ -73,7 +82,7 @@ answered, and say where the answer came from.
 - **Values are ex GST and priced items only.** Items "at cost" have no amount to add.
 - **Practice proposals**: an administrator can mark one so it never counts in the figures or follow-ups (for training, or a test sent to ourselves).
 - **The CSV export is recorded** (who, when, which filters, how many rows). It holds client names and contacts: treat a downloaded copy as TEXC's business records.
-- **Purging** an archived proposal (super only, 90 days after archive) is Phase 7.
+- **Deleting for good** an archived proposal (Brand in Black only, 90 days after archiving, never once accepted) was built in Phase 7.
 
 ## Phase 5 notes
 

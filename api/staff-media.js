@@ -37,7 +37,9 @@ export default async function handler(req, res) {
     if (await rateLimited(d, req, `media-up:${who.email}`, 120, 600)) { tooMany(res); return; }
     const m = FILE_RE.exec(String(q.file));
     const pid = String(q.proposal || '');
-    if (!m || !UUID_RE.test(pid) || !(await getProposal(d, pid))) { res.status(400).json({ error: 'That upload was not understood.' }); return; }
+    const prop = m && UUID_RE.test(pid) ? await getProposal(d, pid) : null;
+    if (!prop) { res.status(400).json({ error: 'That upload was not understood.' }); return; }
+    if (prop.archived_at) { res.status(409).json({ error: 'This proposal is archived. Restore it to change its photographs.' }); return; }
     const bytes = rawBody(req);
     const type = m[3] === 'jpg' ? 'image/jpeg' : 'image/webp';
     if (!bytes.length || bytes.length > MAX_BYTES || (type === 'image/webp' ? !isWebp(bytes) : !isJpeg(bytes))) {

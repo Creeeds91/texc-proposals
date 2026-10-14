@@ -63,6 +63,7 @@ export default async function handler(req, res) {
     ? rest(d, 'PATCH', `texc_proposals?id=eq.${id}&status=eq.draft&current_revision_id=is.null`, listingFields(b.config), { prefer: 'return=minimal' })
     : null);
   if (r.ok && Array.isArray(r.json) && r.json.length === 1) { await listed(); res.status(200).json({ version: version + 1, updated_at: now }); return; }
+  if (r.status === 409) { res.status(409).json({ error: 'archived', message: 'This proposal is archived. Restore it from the dashboard to make changes.' }); return; }
   if (!r.ok) { res.status(503).json({ error: 'Saving failed. Your changes are still here; it will try again.' }); return; }
 
   // Nothing matched: someone saved first (or the proposal does not exist).

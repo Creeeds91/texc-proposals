@@ -38,7 +38,7 @@
 import { readFileSync, readdirSync, existsSync, statSync, mkdirSync, writeFileSync } from 'node:fs';
 import { resolve, dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync, spawnSync, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { build, checkView, templateData } from './build.mjs';
 import { BRAND } from '../lib/brand.js';
@@ -48,7 +48,7 @@ import { runChecks } from '../assets/js/checks.js';
 import { scanText, localityWarning } from '../assets/js/sensitive.js';
 import { inspectPdf } from '../lib/pdf-inspect.js';
 import { FIXTURES as PDF_FIXTURES } from './lib/pdf-fixtures.mjs';
-import { suiteSchema, suiteEnvelope, suiteRefusals, suiteAcceptance, suiteEditor, suiteFlow, suiteDashboard, closeServerSuites } from './lib/server-suites.mjs';
+import { suiteSchema, suiteEnvelope, suiteRefusals, suiteAcceptance, suiteEditor, suiteFlow, suiteDashboard, suiteA11y, closeServerSuites } from './lib/server-suites.mjs';
 import * as LC from '../assets/js/lifecycle.js';
 import { toCsv, cell, COLUMNS as CSV_COLUMNS } from '../lib/report.js';
 
@@ -578,11 +578,104 @@ async function suiteRender() {
     if (stats.leaked) problems.push(`${w}px: a raw token, undefined or NaN reached the page`);
     if (stats.brokenImgs.length) problems.push(`${w}px: broken images ${stats.brokenImgs.join(', ')}`);
     if (stats.emptyAlt) problems.push(`${w}px: ${stats.emptyAlt} visible image(s) with empty alt`);
+    // Sections off screen are laid out only as they come near (content-visibility):
+    // every link in the index must still land on its section, from the top and from the end.
+    const ids = await page.evaluate(() => [...document.querySelectorAll('#main > [data-sec]:not([hidden])')].map((s) => s.id));
+    const misses = [];
+    for (const order of [ids, [...ids].reverse()]) {
+      for (const id of order) {
+        await page.evaluate((x) => { document.documentElement.style.scrollBehavior = 'auto'; location.hash = ''; location.hash = x; }, id);
+        await page.waitForTimeout(60);
+        const off = await page.evaluate((x) => {
+          const atEnd = Math.ceil(window.scrollY + window.innerHeight) >= document.documentElement.scrollHeight - 1;
+          const want = parseFloat(getComputedStyle(document.documentElement).scrollPaddingTop) || 0;
+          return atEnd ? 0 : Math.round(document.getElementById(x).getBoundingClientRect().top - want);
+        }, id);
+        if (Math.abs(off) > 2 && id !== 'cover') misses.push(`${id} ${off}px`);
+      }
+    }
+    if (misses.length) problems.push(`${w}px: index links land off their sections: ${misses.join(', ')}`);
+    detail.push(`${w}px: each of ${ids.length} index links lands on its section, top down and bottom up`);
     await page.close();
     if (problems.length) return { status: FAIL, detail: problems };
     detail.push(`${w}px: ${stats.sections} sections, no console errors, no CSP violations, no overflow`);
   }
   return { status: PASS, detail };
+}
+
+/**
+ * The page-weight budget (docs/architecture.md §8): what a phone downloads
+ * before any photograph — HTML, CSS, scripts and fonts, compressed as they
+ * travel — is at most 200 KB, on the demo page and on a client's link (the
+ * gate). Lazy parts (the document viewer, the signature pad) load on demand
+ * and are not counted until used.
+ */
+export const BUDGET_BYTES = 200 * 1024;
+async function suiteBudget() {
+  const ctx = await browserSession();
+  if (!ctx) return { status: SKIP, detail: ['Playwright not found'] };
+  const fails = [];
+  const detail = [];
+  for (const [name, path] of [['the demo page', '/demo'], ['a client link (the gate)', `/p/aaaaaaaaaa?t=${'0'.repeat(64)}`]]) {
+    const page = await ctx.browser.newPage({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, reducedMotion: 'reduce' });
+    const by = {};
+    const pending = [];
+    page.on('requestfinished', (req) => pending.push((async () => {
+      const type = req.resourceType();
+      if (!['document', 'stylesheet', 'script', 'font'].includes(type)) return;
+      const s = await req.sizes().catch(() => null);
+      if (s) by[type] = (by[type] || 0) + s.responseBodySize;
+    })()));
+    await page.goto(ctx.base + path, { waitUntil: 'load' });
+    await page.waitForTimeout(1500);
+    await Promise.all(pending);
+    await page.close();
+    const total = Object.values(by).reduce((a, b) => a + b, 0);
+    const kb = (n) => `${Math.round(n / 1024)} KB`;
+    const line = `${name}: ${kb(total)} before photographs (${Object.entries(by).map(([k, v]) => `${k} ${kb(v)}`).join(', ')})`;
+    if (total > BUDGET_BYTES) fails.push(`${line} — over the ${kb(BUDGET_BYTES)} budget`);
+    else detail.push(line);
+  }
+  return fails.length ? { status: FAIL, detail: fails } : { status: PASS, detail: [...detail, `budget ${Math.round(BUDGET_BYTES / 1024)} KB, compressed as Vercel sends it`] };
+}
+
+/**
+ * Lighthouse on the client page as a phone gets it (its own mobile profile:
+ * a mid-range device on a slow 4G connection). Three runs, the middle score
+ * counts: performance and accessibility at least 95, best practices at least
+ * 95 (docs/architecture.md §8).
+ */
+async function suiteLighthouse() {
+  const ctx = await browserSession();
+  if (!ctx) return { status: SKIP, detail: ['Playwright not found'] };
+  const { lighthouseCli, lighthouseVersion, chromePath } = await import('./lib/audit-tools.mjs');
+  const cli = lighthouseCli();
+  const chrome = chromePath();
+  if (!cli || !chrome) return { status: SKIP, detail: [`${cli ? 'Chromium' : 'Lighthouse'} not found (scripts/lib/audit-tools.mjs says how to install it outside the repo)`] };
+  const dir = join(ROOT, 'demo-out', 'lighthouse');
+  mkdirSync(dir, { recursive: true });
+  const runs = [];
+  for (let i = 0; i < 3; i += 1) {
+    const out = join(dir, `demo-${i + 1}.json`);
+    // Asynchronously: the page Lighthouse measures is served by this very process.
+    const r = await new Promise((done) => {
+      const child = spawn(process.execPath, [cli, `${ctx.base}/demo`, '--output=json', `--output-path=${out}`, '--quiet',
+        '--chrome-flags=--headless=new --no-sandbox', '--only-categories=performance,accessibility,best-practices'],
+      { env: { ...process.env, CHROME_PATH: chrome } });
+      let stderr = '';
+      child.stderr.on('data', (b) => { stderr += b; });
+      const timer = setTimeout(() => child.kill('SIGKILL'), 180000);
+      child.on('close', (status) => { clearTimeout(timer); done({ status, stderr }); });
+    });
+    if (r.status !== 0 || !existsSync(out)) return { status: SKIP, detail: [`Lighthouse did not run: ${(r.stderr || '').split('\n').filter(Boolean).slice(-1)[0] || r.status}`] };
+    const j = JSON.parse(readFileSync(out, 'utf8'));
+    runs.push({ ...Object.fromEntries(Object.entries(j.categories).map(([k, v]) => [k, v.score])), cls: j.audits['cumulative-layout-shift'].numericValue, tbt: j.audits['total-blocking-time'].numericValue, lcp: j.audits['largest-contentful-paint'].numericValue });
+  }
+  const mid = (k) => [...runs.map((x) => x[k])].sort((a, b) => a - b)[1];
+  const score = { performance: mid('performance'), accessibility: mid('accessibility'), 'best-practices': mid('best-practices') };
+  const fails = Object.entries(score).filter(([, v]) => v < 0.95).map(([k, v]) => `${k} ${Math.round(v * 100)} (needs 95)`);
+  const line = `Lighthouse ${lighthouseVersion()}, phone profile, middle of three: performance ${Math.round(score.performance * 100)}, accessibility ${Math.round(score.accessibility * 100)}, best practices ${Math.round(score['best-practices'] * 100)}; LCP ${(mid('lcp') / 1000).toFixed(1)} s, blocking ${Math.round(mid('tbt'))} ms, layout shift ${mid('cls').toFixed(3)} (reports in demo-out/lighthouse/)`;
+  return fails.length ? { status: FAIL, detail: [line, ...fails] } : { status: PASS, detail: [line] };
 }
 
 function confirmify(cfg) {
@@ -758,7 +851,7 @@ const SUITES = {
   confirm: suiteConfirm, render: suiteRender, print: suitePrint, 'content-sync': suiteContentSync,
   lifecycle: suiteLifecycle,
   schema: suiteSchema, envelope: () => suiteEnvelope({ browserSession }), refusals: suiteRefusals, acceptance: suiteAcceptance, editor: suiteEditor, flow: suiteFlow,
-  dashboard: suiteDashboard,
+  dashboard: suiteDashboard, a11y: suiteA11y, budget: suiteBudget, lighthouse: suiteLighthouse,
 };
 
 const wanted = args.filter((a) => !a.startsWith('--'));

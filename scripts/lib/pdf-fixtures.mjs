@@ -4,7 +4,9 @@
  * that they are test files.
  *
  *   buildPdf(objects, { trailer })   objects: a string (the object's body) or
- *                                    { dict, data } for a stream; object 1 is the catalog
+ *                                    { dict, data, between?, after? } for a stream (`between` goes
+ *                                    between its dictionary and "stream", `after` ends the
+ *                                    keyword's line); object 1 is the catalog
  *   FIXTURES                          name → { bytes(), status, overridable }
  */
 import { deflateSync } from 'node:zlib';
@@ -17,7 +19,7 @@ export function buildPdf(objects, { trailer = '' } = {}) {
     offsets.push(length);
     const buf = typeof o === 'string'
       ? Buffer.from(`${i + 1} 0 obj\n${o}\nendobj\n`, 'latin1')
-      : Buffer.concat([Buffer.from(`${i + 1} 0 obj\n<< ${o.dict} /Length ${o.data.length} >>\nstream\n`, 'latin1'), o.data, Buffer.from('\nendstream\nendobj\n', 'latin1')]);
+      : Buffer.concat([Buffer.from(`${i + 1} 0 obj\n<< ${o.dict} /Length ${o.data.length} >>${o.between ?? '\n'}stream${o.after ?? '\n'}`, 'latin1'), o.data, Buffer.from('\nendstream\nendobj\n', 'latin1')]);
     parts.push(buf);
     length += buf.length;
   });
@@ -111,5 +113,52 @@ export const FIXTURES = {
     status: 'rejected', overridable: true, slow: true,
   },
   'a stream in a filter the check cannot read (LZW)': { bytes: () => textPdf(TEST, { extra: [{ dict: '/Filter /LZWDecode', data: Buffer.from([0x80, 0x0b, 0x60, 0x50, 0x22, 0x0c, 0x0c, 0x85, 0x01]) }] }), status: 'cannot-verify', overridable: true },
+  // The independent security review of 14 Oct 2026: ways a script once slipped past as "clean".
+  'an object stream with JavaScript that also calls itself an image': {
+    bytes: () => textPdf(TEST, { extra: [{ dict: '/Type /ObjStm /Subtype /Image /N 1 /First 4 /Filter /FlateDecode', data: deflateSync(Buffer.from('7 0 << /S /JavaScript /JS (x) >>', 'latin1')) }] }),
+    status: 'rejected', overridable: true,
+  },
+  'a nested /Filter /DCTDecode ahead of the real filter': {
+    bytes: () => textPdf(TEST, { extra: [{ dict: '/Type /ObjStm /N 1 /First 4 /DecodeParms << /Filter /DCTDecode >> /Filter /FlateDecode', data: deflateSync(Buffer.from('7 0 << /S /JavaScript /JS (x) >>', 'latin1')) }] }),
+    status: 'cannot-verify', overridable: true,
+  },
+  'a nested /Filter /DCTDecode ahead of the real filter, with no decode parameters': {
+    bytes: () => textPdf(TEST, { extra: [{ dict: '/Type /ObjStm /N 1 /First 4 /Resources << /Filter /DCTDecode >> /Filter /FlateDecode', data: deflateSync(Buffer.from('7 0 << /S /JavaScript /JS (x) >>', 'latin1')) }] }),
+    status: 'rejected', overridable: true,
+  },
+  // The second review, 14 Oct 2026: nine more ways, each read by pdf.js as an object stream.
+  ...Object.fromEntries([
+    ['the abbreviated /F for /Filter', '/Type /ObjStm /N 1 /First 4 /F /FlateDecode'],
+    ['the abbreviated /DP with a predictor', '/Type /ObjStm /N 1 /First 4 /Filter /FlateDecode /DP << /Predictor 12 /Columns 1 >>'],
+    ['a predictor written +12', '/Type /ObjStm /N 1 /First 4 /Filter /FlateDecode /DecodeParms << /Predictor +12 /Columns 1 >>'],
+    ['/Filter given twice', '/Type /ObjStm /N 1 /First 4 /Filter /FlateDecode /Filter [/FlateDecode /FlateDecode]'],
+    ['/DecodeParms given twice, the first empty', '/Type /ObjStm /N 1 /First 4 /DecodeParms << >> /Filter /FlateDecode /DecodeParms << /Predictor 12 /Columns 1 >>'],
+    ['a comment inside the dictionary', '%c\n /Type /ObjStm /N 1 /First 4 /Filter /FlateDecode'],
+    ['/Type /XRef with /N and /First', '/Type /XRef /N 1 /First 4 /Filter /FlateDecode'],
+    ['/Type given twice, XRef then ObjStm', '/Type /XRef /Type /ObjStm /N 1 /First 4 /Filter /FlateDecode'],
+  ].map(([name, dict]) => [`an object stream with JavaScript: ${name}`, {
+    bytes: () => textPdf(TEST, { extra: [{ dict, data: deflateSync(Buffer.from('7 0 << /S /JavaScript /JS (x) >>', 'latin1')) }] }),
+    status: dict.startsWith('/Type /XRef /N') ? 'rejected' : 'cannot-verify', overridable: true,
+  }])),
+  'an object stream whose "stream" keyword has a space before the line end': {
+    bytes: () => textPdf(TEST, { extra: [{ dict: '/Type /ObjStm /N 1 /First 4 /Filter /FlateDecode', after: ' \n', data: deflateSync(Buffer.from('7 0 << /S /JavaScript /JS (x) >>', 'latin1')) }] }),
+    status: 'rejected', overridable: true,
+  },
+  'an object stream whose filter is an indirect reference': {
+    bytes: () => textPdf(TEST, { extra: [{ dict: '/Type /ObjStm /N 1 /First 4 /Filter 9 0 R', data: deflateSync(Buffer.from('7 0 << /S /JavaScript /JS (x) >>', 'latin1')) }] }),
+    status: 'cannot-verify', overridable: true,
+  },
+  'a comment between a stream\'s dictionary and "stream"': {
+    bytes: () => textPdf(TEST, { extra: [{ dict: '/Type /ObjStm /N 1 /First 4 /Filter /FlateDecode', between: '\n% nothing to see\n', data: deflateSync(Buffer.from('7 0 << /S /JavaScript /JS (x) >>', 'latin1')) }] }),
+    status: 'cannot-verify', overridable: true,
+  },
+  'Flate with a PNG predictor (the bytes stay scrambled until it is undone)': {
+    bytes: () => textPdf(TEST, { extra: [{ dict: '/Type /ObjStm /N 1 /First 4 /Filter /FlateDecode /DecodeParms << /Predictor 12 /Columns 1 >>', data: deflateSync(Buffer.from('\x02' + '7 0 << /S /JavaScript /JS (x) >>'.split('').join('\x02'), 'latin1')) }] }),
+    status: 'cannot-verify', overridable: true,
+  },
+  'a run of ASCII85 "z" that would expand past 96 MB': {
+    bytes: () => textPdf(TEST, { extra: [{ dict: '/Filter /ASCII85Decode', data: Buffer.concat([Buffer.alloc(Math.floor(24.5 * 1024 * 1024), 0x7a), Buffer.from('~>', 'latin1')]) }] }),
+    status: 'rejected', overridable: false, slow: true,
+  },
   'no pages at all': { bytes: () => buildPdf(['<< /Type /Catalog /Pages 2 0 R >>', '<< /Type /Pages /Kids [] /Count 0 >>']), status: 'cannot-verify', overridable: true },
 };

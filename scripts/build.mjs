@@ -9,6 +9,7 @@
  *                          ->  lib/editor-html.js    the page plus the editor drawer, as a string (served behind sign-in)
  * templates/signin.html    ->  lib/signin-html.js    the staff sign-in page
  * templates/dashboard.html ->  lib/dashboard-html.js the staff dashboard (behind sign-in)
+ * templates/404.html       ->  views/404.html        "this page does not exist" (public/404.html on Vercel)
  * content/, fixtures/      ->  lib/template-data.js, lib/demo-fixture.js   the server's copies
  *
  *   node scripts/build.mjs --public    also writes public/, the only static files Vercel serves
@@ -145,8 +146,12 @@ export function build({ write = true } = {}) {
     'views/proposal.html': html
       .replace('data-tpl="1"', `data-tpl="${TEMPLATE_VERSION}" data-boot="gate"`)
       .replace('<script type="module" src="/assets/js/proposal.js"></script>', '<script type="module" src="/assets/js/proposal.js"></script>\n<script type="module" src="/assets/js/gate.js"></script>'),
-    'views/demo.html': html.replace('data-tpl="1"', `data-tpl="${TEMPLATE_VERSION}" data-boot="fixture" data-fixture="/fixtures/demo-proposal.json"`),
+    // The demo's banner is there from the first paint, so it never pushes the page down as it loads.
+    'views/demo.html': html.replace('data-tpl="1"', `data-tpl="${TEMPLATE_VERSION}" data-boot="fixture" data-fixture="/fixtures/demo-proposal.json"`)
+      .replace('<div id="demo-chip" class="demo-chip" hidden>', '<div id="demo-chip" class="demo-chip">'),
   };
+  // Not found: what any address that is not a page answers, in the proposal's own design.
+  views['views/404.html'] = fillBrand(read('templates/404.html'));
   for (const [name, body] of Object.entries(views)) checkView(name, body);
 
   // The editor: the same page with the drawer added. It is NOT a static file —
@@ -209,6 +214,7 @@ export function writePublic({ demo = process.env.DEMO_PUBLIC === '1' } = {}) {
   mkdirSync(resolve(out, 'views'), { recursive: true });
   cpSync(resolve(ROOT, 'assets'), resolve(out, 'assets'), { recursive: true });
   cpSync(resolve(ROOT, 'views/proposal.html'), resolve(out, 'views/proposal.html'));
+  cpSync(resolve(ROOT, 'views/404.html'), resolve(out, '404.html'));
   cpSync(resolve(ROOT, 'robots.txt'), resolve(out, 'robots.txt'));
   if (demo) {
     cpSync(resolve(ROOT, 'views/demo.html'), resolve(out, 'views/demo.html'));

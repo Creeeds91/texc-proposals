@@ -268,6 +268,39 @@ export async function suiteRefusals() {
   } else fails.push(`begin answered ${swapped.status}`);
   const leftovers = psql(a.sb.conn, `select count(*) from public.texc_attachments where proposal_id = '${live.id}'`);
   if (leftovers !== '3') fails.push(`refused uploads left rows behind (${leftovers} files on the proposal, expected 3)`);
+  // The security review of 14 Oct 2026: a hash that shares the first 16
+  // characters with an issued file's, and its name, must not reach that file.
+  const issued = JSON.parse(psql(a.sb.conn, `select row_to_json(x)::text from (select sha256, original_name from public.texc_attachments where proposal_id = '${live.id}' order by created_at limit 1) x`));
+  const twin = issued.sha256.slice(0, 16) + 'f'.repeat(48);
+  const collide = await staff.call('POST', '/api/attachments', { action: 'verify', proposal: live.id, name: issued.original_name, sha256: twin });
+  const afterTwin = await anon.call('POST', '/api/attachment', { slug: live.slug, t: live.t, vt: liveVt, id: 'a1' });
+  const still = afterTwin.status === 200 ? await fetch(afterTwin.json.url) : null;
+  const stillBytes = still && still.ok ? Buffer.from(await still.arrayBuffer()) : null;
+  if (collide.status !== 404 || !stillBytes || sha256(stillBytes) !== sha256(testPdf(DEMO.attachments[0].title))) fails.push(`a verify naming a look-alike hash touched an issued file (${collide.status}, the client then got ${afterTwin.status})`);
+  // Uploads begun and never checked are swept, never a recorded file.
+  const { storedCount, sweepUnrecorded } = await import('../../lib/attachments.js');
+  const { db: dbOf } = await import('../../lib/db.js');
+  const storedBefore = await storedCount(live.id);
+  for (const word of ['orphan one', 'orphan two']) {
+    const bytes = testPdf(word);
+    const begun = await staff.call('POST', '/api/attachments', { action: 'begin', proposal: live.id, name: `${word.replace(' ', '-')}.pdf`, bytes: bytes.length, sha256: sha256(bytes) });
+    if (begun.json && begun.json.uploadUrl) await fetch(begun.json.uploadUrl, { method: 'PUT', headers: { 'content-type': 'application/pdf' }, body: bytes });
+  }
+  const withOrphans = await storedCount(live.id);
+  await sweepUnrecorded(dbOf(), live.id); // too young: an upload link could still be on its way
+  const young = await storedCount(live.id);
+  // A file being checked has a pending record, and is never swept from under its check.
+  const claimed = testPdf('being checked');
+  const cbegin = await staff.call('POST', '/api/attachments', { action: 'begin', proposal: live.id, name: 'being-checked.pdf', bytes: claimed.length, sha256: sha256(claimed) });
+  if (cbegin.json && cbegin.json.uploadUrl) await fetch(cbegin.json.uploadUrl, { method: 'PUT', headers: { 'content-type': 'application/pdf' }, body: claimed });
+  psql(a.sb.conn, `insert into public.texc_attachments (proposal_id, storage_path, original_name, sha256, scan_status, uploaded_by) values ('${live.id}', 'proposals/${live.id}/attachments/${sha256(claimed)}-being-checked.pdf', 'being-checked.pdf', '${sha256(claimed)}', 'pending', 'check')`);
+  await sweepUnrecorded(dbOf(), live.id, { minAgeMs: 0 });
+  const swept = await storedCount(live.id);
+  const finished = await staff.call('POST', '/api/attachments', { action: 'verify', proposal: live.id, name: 'being-checked.pdf', sha256: sha256(claimed) });
+  const reopened = await anon.call('POST', '/api/attachment', { slug: live.slug, t: live.t, vt: liveVt, id: 'a1' });
+  if (withOrphans !== storedBefore + 2 || young !== withOrphans || swept !== storedBefore + 1 || finished.status !== 200 || finished.json.file.status !== 'clean' || reopened.status !== 200) {
+    fails.push(`sweeping unchecked uploads: ${storedBefore} → ${withOrphans} → (too young) ${young} → ${swept} with one being checked; that check then ${finished.status} ${finished.json && finished.json.file && finished.json.file.status}; the client's document ${reopened.status}`);
+  }
   // A replaced file is a change worth naming before the next revision, even
   // when its card reads the same: two files of the same size and page count.
   const sameSize = (word) => textPdf([`Corrected copy, version ${word}`, 'A test file for the attachment checks.'], { compress: false });
@@ -309,7 +342,7 @@ export async function suiteRefusals() {
   const gpub2 = await staff.call('POST', '/api/proposals', { action: 'publish', id: gated.id, version: gput.json.version });
   const snap = JSON.parse(psql(a.sb.conn, `select attachments_snapshot::text from public.texc_proposal_revisions where proposal_id = '${gated.id}'`) || '[]');
   if (released.status !== 200 || released.json.file.status !== 'override' || audited !== '1' || gpub2.status !== 200) fails.push(`releasing with a reason did not let it publish, on the record (${released.status}, audit ${audited}, publish ${gpub2.status})`);
-  if (snap.length !== 3 || snap[0].released !== 'override' || snap.some((x) => !/^proposals\/[0-9a-f-]{36}\/attachments\/[0-9a-f]{16}-[a-z0-9-]+\.pdf$/.test(x.path))) fails.push(`the revision did not bind its files: ${JSON.stringify(snap).slice(0, 200)}`);
+  if (snap.length !== 3 || snap[0].released !== 'override' || snap.some((x) => !/^proposals\/[0-9a-f-]{36}\/attachments\/[0-9a-f]{64}-[a-z0-9-]+\.pdf$/.test(x.path))) fails.push(`the revision did not bind its files: ${JSON.stringify(snap).slice(0, 200)}`);
   const published = JSON.parse(psql(a.sb.conn, `select published_text from public.texc_proposal_revisions where proposal_id = '${gated.id}'`));
   if (JSON.stringify(published.attachments).match(/"file"|storage|proposals\//) || published.attachments[0].pages !== 1) fails.push(`the client's copy carries file internals, or not the measured page count: ${JSON.stringify(published.attachments[0])}`);
 
@@ -869,6 +902,8 @@ export async function suiteFlow() {
   await cp.click('#gate-go');
   await cp.waitForFunction(() => document.documentElement.classList.contains('unlocked'), null, { timeout: 15000 });
   const unlockMs = Date.now() - t0;
+  // The plan's target: a phone opens a proposal in under a second (docs/architecture.md §13).
+  expect(unlockMs < 1500, `unlocking took ${unlockMs} ms at 390 (target under 1 s)`);
   expect(/^[A-Z]+-P-\d{4}-\d{3}$/.test((await cp.textContent('[data-field="meta.reference"]')).trim()), 'the unlocked page does not show its reference');
   await cp.waitForFunction(() => { const i = document.querySelector('img[data-img="cover.image"]'); return i && i.complete && i.naturalWidth > 0; }, null, { timeout: 15000 }).catch(() => {});
   const cover = await cp.evaluate(() => { const i = document.querySelector('img[data-img="cover.image"]'); return { src: i.currentSrc, w: i.naturalWidth, alt: i.alt }; });
@@ -1130,7 +1165,36 @@ export async function suiteDashboard() {
   const listing = q(`select client_company || '|' || site_locality from public.texc_proposals where id = '${fresh.json.id}'`);
   expect(listing === `Ridgeline Listing ${tag} Pty Ltd|Scottsdale` && (await find(`morgan ridgeline ${tag}`)).includes(fresh.json.id), `a draft's listing after a save: ${listing}`);
 
-  // 6. The page, in a browser.
+  // 6. Deleting for good: Brand in Black only, 90 days after archiving, never accepted, files and all.
+  const stored = async (bucket, folder) => {
+    const r = await fetch(`${a.sb.url}/storage/v1/object/list/${bucket}`, { method: 'POST', headers: { apikey: a.sb.secretKey, 'content-type': 'application/json' }, body: JSON.stringify({ prefix: folder, limit: 100 }) });
+    return r.ok ? (await r.json()).length : -1;
+  };
+  const doomed = await demoProposal(admin);
+  const dref = q(`select reference from public.texc_proposals where id = '${doomed.id}'`);
+  const purgeAs = (c, id, confirm) => c.call('POST', '/api/proposals', { action: 'purge', id, confirm });
+  const notArchived = await purgeAs(staff, doomed.id, dref);
+  await admin.call('POST', '/api/proposals', { action: 'archive', id: doomed.id, reason: 'Duplicate or sent in error' });
+  const tooSoon = await purgeAs(staff, doomed.id, dref);
+  q(`update public.texc_proposals set archived_at = now() - interval '91 days' where id = '${doomed.id}'`);
+  const byAdmin = await purgeAs(admin, doomed.id, dref);
+  const wrongWord = await purgeAs(staff, doomed.id, dref.toLowerCase());
+  const filesBefore = await stored('texc-attachments', `proposals/${doomed.id}/attachments`);
+  expect(notArchived.status === 409 && tooSoon.status === 409 && /can be deleted from/.test(tooSoon.json.error) && byAdmin.status === 403 && wrongWord.status === 400 && filesBefore > 0,
+    `purge refusals: not archived ${notArchived.status}, too soon ${tooSoon.status}, an administrator ${byAdmin.status}, wrong word ${wrongWord.status}, files before ${filesBefore}`);
+  q(`update public.texc_proposals set archived_at = now() - interval '120 days' where id = '${seeded.ids.ridgeway}'`);
+  const keptRef = q(`select reference from public.texc_proposals where id = '${seeded.ids.ridgeway}'`);
+  const kept = await purgeAs(staff, seeded.ids.ridgeway, keptRef);
+  expect(kept.status === 409 && /business record/.test(kept.json.error), `an accepted proposal answered a purge with ${kept.status} ${kept.text.slice(0, 80)}`);
+  const swept = await purgeAs(staff, doomed.id, dref);
+  const remaining = q(`select (select count(*) from public.texc_proposals where id = '${doomed.id}') + (select count(*) from public.texc_events where proposal_id = '${doomed.id}') + (select count(*) from public.texc_proposal_revisions where proposal_id = '${doomed.id}') + (select count(*) from public.texc_attachments where proposal_id = '${doomed.id}')`);
+  const note = q(`select detail->>'reference' || '|' || coalesce(detail->>'archive_reason', '') from public.texc_staff_audit where proposal_id = '${doomed.id}' and action = 'proposal_purged'`);
+  const linkAfter = await client(a).call('GET', `/api/proposal?slug=${doomed.slug}&t=${doomed.t}`);
+  expect(swept.status === 200 && swept.json.removed.revisions === 1 && swept.json.removed.stored >= filesBefore && remaining === '0'
+    && (await stored('texc-attachments', `proposals/${doomed.id}/attachments`)) === 0 && note === `${dref}|Duplicate or sent in error` && linkAfter.status === 410 && linkAfter.text === goneBody,
+    `purge: ${swept.status} ${swept.text.slice(0, 120)}, rows left ${remaining}, audit note ${note}, link ${linkAfter.status}`);
+
+  // 7. The page, in a browser.
   const b = await browser();
   if (!b) notes.push('NOT CHECKED in a browser: Playwright not found');
   else {
@@ -1192,6 +1256,19 @@ export async function suiteDashboard() {
     await p.click('#db-restore');
     await p.waitForSelector('#db-archive', { timeout: 10000 }).catch(() => {});
     expect((await client(a).call('GET', `/api/proposal?slug=${other.slug}&t=${other.t}`)).status === 200, 'restoring in the page did not bring the link back');
+    // Deleting for good through the page, typing the reference.
+    await admin.call('POST', '/api/proposals', { action: 'archive', id: other.id, reason: 'Work completed' });
+    q(`update public.texc_proposals set archived_at = now() - interval '100 days' where id = '${other.id}'`);
+    const oref = q(`select reference from public.texc_proposals where id = '${other.id}'`);
+    await p.goto(`${a.url}/dashboard?open=${other.id}`);
+    await p.waitForSelector('#db-purge');
+    await p.click('#db-purge');
+    await p.fill('#db-purge-confirm', oref);
+    await p.click('.db-archive-form [type=submit]');
+    await p.waitForFunction(() => !document.getElementById('db-panel').open, null, { timeout: 10000 }).catch(() => {});
+    const goneRow = q(`select count(*) from public.texc_proposals where id = '${other.id}'`);
+    const listed2 = await p.evaluate(() => window.__dashboard.state.rows.length);
+    expect(goneRow === '0' && listed2 > 0, `deleting in the page left ${goneRow} rows`);
     expect(!problems.length, `the staff page reported: ${problems.join(' | ')}`);
     await ctx.close();
   }
@@ -1202,7 +1279,82 @@ export async function suiteDashboard() {
     'search by any words\' beginnings (contact, service, reference), all of them; the CSV is the filtered list, formula-safe, same-site only and recorded',
     'archiving refuses the client link with the uniform 410, takes no saves or publishing, leaves the editor\'s list and is not a withdrawal; restoring brings it all back; both are logged and audited',
     'practice proposals leave every figure; a draft\'s listing follows its saves',
+    'deleting for good: Brand in Black only, 90 days after archiving, never once accepted, by typing the reference; the rows and the stored files go, the link answers 410, and the staff audit keeps a note',
     'in the browser: signing in lands on the dashboard; 390 wide with nothing off the edge; months focusable with their figures; a table twin; search and filters kept in the address; history; archive and restore',
     ...notes,
   ] };
+}
+
+/* ------------------------------------------------------------ accessibility */
+
+/**
+ * axe-core's WCAG 2.2 A and AA rules on every page a person meets, at 1440
+ * and 390, under the real CSP (axe is evaluated through the browser's own
+ * debugging channel, which a page's policy does not govern): the client page
+ * from the demo, the gate, a proposal unlocked down to its acceptance form,
+ * a dead link, sign-in, the dashboard and its history panel, the editor.
+ */
+export async function suiteA11y() {
+  const a = await app();
+  if (!a) return skipNoStack();
+  const { axeSource, axeVersion } = await import('./audit-tools.mjs');
+  const axe = axeSource();
+  if (!axe) return { status: SKIP, detail: ['axe-core not found (scripts/lib/audit-tools.mjs says how to install it outside the repo)'] };
+  const b = await browser();
+  if (!b) return { status: SKIP, detail: ['Playwright not found'] };
+  const { psql } = await import('./local-supabase.mjs');
+  const q = (sql) => psql(a.sb.conn, sql);
+  const staff = await checkStaff(a);
+  if (q("select count(*) from public.texc_proposals where created_by = 'george@example.com'") === '0') {
+    const { seedDashboard } = await import('../demo/dashboard-seed.mjs');
+    seedDashboard(a.sb.conn);
+  }
+  const live = await demoProposal(staff);
+  const path = new URL(live.url).pathname + new URL(live.url).search;
+  const story = q("select id from public.texc_proposals where created_by = 'george@example.com' and project like 'Highway cutting%' limit 1");
+  const { ctx: sctx } = await signedInContext(a, b);
+  const signedIn = await sctx.storageState();
+  await sctx.close();
+
+  const PAGES = [
+    { name: 'client page (demo)', url: '/demo', ready: '[data-sec="cover"]' },
+    { name: 'gate', url: path, ready: '#gate-form' },
+    { name: 'client page, unlocked', url: path, ready: '#gate-form', unlock: true },
+    { name: 'dead link', url: `/p/aaaaaaaaaa?t=${'0'.repeat(64)}`, ready: '[data-gate="gone"]:not([hidden])' },
+    { name: 'sign-in', url: '/signin', ready: '#email' },
+    { name: 'page not found', url: '/no-such-page', ready: '.gate-title' },
+    { name: 'dashboard', url: '/dashboard', ready: '.db-svg', staff: true },
+    { name: 'dashboard, history panel', url: `/dashboard?open=${story}`, ready: '.db-timeline', staff: true },
+    { name: 'editor', url: `/editor/${live.id}`, ready: '#ed-panels .ed-panel', staff: true },
+  ];
+  const found = [];
+  let checked = 0;
+  for (const [width, height, scale] of [[1440, 900, 1], [390, 844, 2]]) {
+    for (const pg of PAGES) {
+      const ctx = await b.browser.newContext({ viewport: { width, height }, deviceScaleFactor: scale, reducedMotion: 'reduce', ...(pg.staff ? { storageState: signedIn } : {}) });
+      const page = await ctx.newPage();
+      try {
+        await page.goto(a.url + pg.url);
+        await page.waitForSelector(pg.ready, { timeout: 20000 });
+        if (pg.unlock) {
+          await page.fill('#gate-pass', live.passphrase);
+          await page.click('#gate-go');
+          await page.waitForFunction(() => document.documentElement.classList.contains('unlocked'), null, { timeout: 20000 });
+        }
+        await page.waitForTimeout(400);
+        await page.evaluate(axe);
+        const tags = (process.env.A11Y_TAGS || 'wcag2a,wcag2aa,wcag21a,wcag21aa,wcag22aa').split(',');
+        const res = await page.evaluate((values) => window.axe.run(document, { runOnly: { type: 'tag', values }, resultTypes: ['violations'] }), tags);
+        checked += 1;
+        for (const v of res.violations) {
+          found.push(`${pg.name} @${width}: ${v.id} (${v.impact}, ${v.nodes.length}×) ${v.help} — ${v.nodes.slice(0, 3).map((n) => n.target.join(' ')).join(' | ')}`);
+        }
+      } catch (e) {
+        found.push(`${pg.name} @${width}: could not be audited (${e.message.split('\n')[0]})`);
+      }
+      await ctx.close();
+    }
+  }
+  if (found.length) return { status: FAIL, detail: found };
+  return { status: PASS, detail: [`axe-core ${axeVersion()}, WCAG 2.2 A and AA: no violations on ${checked} pages and states (${PAGES.map((p) => p.name).join(', ')}) at 1440 and 390`] };
 }

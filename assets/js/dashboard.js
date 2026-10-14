@@ -11,6 +11,7 @@
  */
 import {
   STATES, PERIODS, SORTS, figures, monthly, listRows, followUpList, facets, dayLabel, hobartDate, titleOf, periodLabel, stateOf, followUps,
+  PURGE_AFTER_DAYS, purgeableFrom,
 } from './lifecycle.js';
 import { DOC_TYPES } from './schema.js';
 import { formatAUD } from './money.js';
@@ -452,6 +453,7 @@ async function openDetail(id) {
       fu.length ? h('ul', { class: 'db-panel-follow' }, fu.map((x) => h('li', {}, icon('flag'), h('span', { text: x.text })))) : null,
       p.archivedAt ? h('p', { class: 'db-panel-archived' }, icon('archive'), h('span', { text: `Archived ${dayLabel(p.archivedAt)} by ${p.archivedBy || 'staff'}${p.archiveReason ? `: “${p.archiveReason}”` : ''}. Its client link does not open while it is archived.` })) : null,
       actions.childNodes.length ? actions : null,
+      purgeLine(p),
       h('h3', { class: 'db-h4', text: 'Facts' }),
       h('dl', { class: 'db-facts' },
         fact('Document', DOC_TYPES[row.doc_type] || ''),
@@ -515,6 +517,45 @@ function archiveForm(p, st) {
   const body = panel.querySelector('.db-panel-body');
   body.replaceChildren(form);
   reason.focus();
+}
+
+/**
+ * Deleting for good, shown only to Brand in Black and only on an archived
+ * proposal: when it becomes possible, why it never will be (accepted), or the
+ * way in. lib/purge.js and texc_purge() hold every rule again.
+ */
+function purgeLine(p) {
+  if (!can('super') || !p.archivedAt) return null;
+  if ((p.acceptances || []).length) return h('p', { class: 'db-note', text: 'It was accepted, so it is kept as a business record and cannot be deleted.' });
+  const from = purgeableFrom({ archived_at: p.archivedAt });
+  if (from > state.now) return h('p', { class: 'db-note', text: `Brand in Black can delete it permanently from ${dayLabel(from)}, ${PURGE_AFTER_DAYS} days after it was archived.` });
+  return h('div', { class: 'db-actions' }, h('button', { type: 'button', class: 'btn btn--secondary btn--sm db-danger', id: 'db-purge', onclick: () => purgeForm(p) }, icon('trash-2'), h('span', { text: 'Delete permanently…' })));
+}
+
+function purgeForm(p) {
+  const word = p.reference || 'DELETE';
+  const input = h('input', { type: 'text', id: 'db-purge-confirm', autocomplete: 'off', spellcheck: 'false', 'aria-describedby': 'db-purge-help' });
+  const msg = h('p', { class: 'db-error', role: 'alert' });
+  const form = h('form', { class: 'db-archive-form', onsubmit: async (e) => {
+    e.preventDefault();
+    if (input.value.trim() !== word) { msg.textContent = `Type ${word} exactly.`; return; }
+    const go = form.querySelector('[type=submit]');
+    go.disabled = true;
+    const r = await api('POST', '/api/proposals', { action: 'purge', id: p.id, confirm: input.value.trim() });
+    go.disabled = false;
+    if (!r.ok) { msg.textContent = (r.json && r.json.error) || 'It could not be deleted.'; return; }
+    $('db-panel').close();
+    await reload();
+    toast(r.json.filesLeft ? 'Deleted. Some stored files could not be removed; the staff audit lists them.' : 'Deleted permanently. The staff audit keeps a record that it existed.');
+  } },
+  h('h3', { class: 'db-h4', text: 'Delete this proposal permanently' }),
+  h('p', { class: 'db-warn' }, icon('alert-triangle'), h('span', { text: 'This cannot be undone. Every revision, its history, its photographs and documents are deleted. Only the staff audit keeps a note of what it was and who deleted it.' })),
+  h('label', { class: 'db-control' }, h('span', { class: 'db-control-label', id: 'db-purge-help', text: `Type ${word} to confirm` }), input), msg,
+  h('div', { class: 'db-actions' },
+    h('button', { type: 'submit', class: 'btn btn--secondary btn--sm db-danger' }, icon('trash-2'), h('span', { text: 'Delete permanently' })),
+    h('button', { type: 'button', class: 'btn btn--secondary btn--sm', onclick: () => openDetail(p.id) }, h('span', { text: 'Cancel' }))));
+  $('db-panel').querySelector('.db-panel-body').replaceChildren(form);
+  input.focus();
 }
 
 async function restore(p) {

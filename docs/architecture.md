@@ -674,7 +674,7 @@ uploads plus the structural check. Option B (ClamAV in Sydney) is not built.
 and a Vercel function accepts 4.5 MB, so the bytes never pass through one:
 
 1. `begin` — the editor hashes the file (SHA-256) and names it; the server
-   fixes the path `proposals/<id>/attachments/<sha256[:16]>-<name>.pdf` and
+   fixes the path `proposals/<id>/attachments/<sha256>-<name>.pdf` (the whole hash since 14 Oct 2026, §18) and
    answers a one-off upload URL (or the existing record, if this proposal
    already has that exact file).
 2. The browser PUTs the bytes to that URL. The bucket enforces 25 MB and
@@ -920,3 +920,76 @@ the contact's name.
 **Not built:** the purge (Phase 7); saved views; an emailed digest of
 follow-ups; charts of value over time (the figures give the totals); a
 "lost" outcome separate from the archive reason.
+
+## 18. Phase 7 as built (14 Oct 2026)
+
+Hardening and handover. Where the build adds to §7 and §13.
+
+**Deleting for good** (`texc_purge()`, `lib/purge.js`). The one way anything
+here is deleted, and only by Brand in Black (a super): an archived proposal,
+90 days after it was archived, never once it has been accepted (an
+acceptance is a business record and is kept), and only by typing its
+reference (or DELETE for one never issued). The staff audit records what is
+about to go first — that entry is all that remains. Then, in one
+transaction with the proposal row locked, the database checks every rule
+again, raises the transaction-local `texc.purge` flag (the only thing the
+append-only and immutability triggers let through) and deletes the drafts,
+revisions and their keys, events, views, document records and the proposal.
+Last, every stored object under `proposals/<id>/` in the three buckets is
+listed and removed; any that could not be are recorded in the audit. The
+dashboard shows supers when deletion becomes possible, why it never will
+(accepted), or the way in.
+
+**Security reviews.** Two independent passes over Phases 4–7 (14 Oct 2026).
+What they found and how each was closed:
+
+- *A document's path held only 16 characters of its fingerprint*, so an
+  editor could name a look-alike hash, have verify delete the issued file and
+  upload other bytes in its place. Paths now carry the whole SHA-256, and a
+  stored file any record points at is never deleted by a request.
+- *The structural PDF check could be steered past an object stream holding a
+  script* (a nested key read as the stream's own, an indirect filter, a
+  comment, an unreversed predictor, abbreviated or repeated keys, an XRef
+  type on an object stream, a "stream" keyword it did not recognise). It now
+  reads only a stream's own dictionary level and fails closed on anything a
+  reader might read differently: such a stream is "cannot verify", which only
+  an administrator can release. Each bypass is a fixture in
+  `scripts/lib/pdf-fixtures.mjs`; the previous check passed them as clean.
+- *ASCII85 decoding was unbounded*; it is now sized before it decodes.
+- *Archiving was not enforced in the database for saves*, nor at all for
+  documents and photographs. A trigger refuses a draft save on an archived
+  proposal; the document and photograph endpoints refuse changes.
+- *A client could accept between the checklist and the publish write.*
+  `texc_publish` now takes what the caller saw (`current_accepted`) and
+  refuses under the row lock if it changed.
+- *Uploads begun and never checked could pile up.* A proposal holds at most
+  40 stored files; at the cap, uploads with no record and older than any
+  upload link (2 h 10 min) are cleared. A file being checked is claimed by a
+  pending record before it is read, so it is never cleared from under its
+  check.
+
+**Accessibility.** `check.mjs a11y` runs axe-core's WCAG 2.2 A and AA rules
+on every page a person meets — the demo page, the gate, a proposal unlocked
+down to its acceptance form, a dead link, page not found, sign-in, the
+dashboard and its history panel, the editor — at 1440 and 390, under the
+real CSP. It found two: the phone's icon-only Download PDF button lost its
+name (its words are now visually hidden rather than removed) and an editor
+badge's green text was too faint (the tick keeps the green, the words are
+grey). The passphrase gate is now the page's main landmark.
+
+**Speed.** `check.mjs lighthouse` runs Lighthouse's phone profile three
+times on the client page and takes the middle: performance 99,
+accessibility 100, best practices 100. Two changes got it there from 81:
+off-screen sections use `content-visibility: auto` (layout work on a slow
+phone fell from about 900 ms to 200 ms; print forces everything visible, and
+`check.mjs render` proves every index link still lands on its section), and
+the demo page no longer shifts as it fills itself in. `check.mjs budget`
+holds HTML, CSS, scripts and fonts — compressed, as Vercel sends them — under
+200 KB before photographs: about 60 KB today. The flow check holds unlocking
+on a phone under 1.5 s (target 1 s).
+
+**Not found.** `templates/404.html` → `views/404.html` → `public/404.html`,
+in the gate's design, under the same strict CSP.
+
+**Handover.** `docs/handover.md` (go-live runbook, care, accepted limits)
+and `docs/editor-guide.md` (for TEXC's staff, with pictures; printable).

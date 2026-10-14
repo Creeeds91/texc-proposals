@@ -11,7 +11,8 @@
  *     does, including the races (a stale revision number, a changed passphrase);
  *   - tries to change, delete and truncate a published revision and the
  *     append-only logs, and expects every attempt refused;
- *   - searches, reads the dashboard overview, archives and restores.
+ *   - searches, reads the dashboard overview, archives and restores;
+ *   - purges: only archived for 90 days, never accepted, and nothing left.
  *
  *   node scripts/schema-standup-check.mjs        a fresh local stack, deleted afterwards
  *
@@ -36,7 +37,7 @@ const RPCS = {
   texc_claim_reference: { p_proposal: '00000000-0000-0000-0000-000000000000', p_prefix: 'X' },
   texc_publish: { p: {} }, texc_rotate: { p: {} }, texc_withdraw: { p_proposal: '00000000-0000-0000-0000-000000000000', p_actor: 'x', p_note: '' },
   texc_record_view: { p: {} }, texc_accept: { p: {} },
-  texc_set_archived: { p: {} }, texc_search: { p_q: 'x' }, texc_overview: { p: {} },
+  texc_set_archived: { p: {} }, texc_search: { p_q: 'x' }, texc_overview: { p: {} }, texc_purge: { p: {} },
 };
 
 const hex = (n) => randomBytes(n).toString('hex');
@@ -252,6 +253,8 @@ export async function runSchemaProof({ log = () => {} } = {}) {
     ok('archiving is not withdrawing: the status stays as it was', archState.json[0].status === 'issued' && archState.json[0].archived_at && archState.json[0].archive_reason === 'Client did not proceed', archState.json);
     const pubArchived = await rpc('texc_publish', { p: revision(3) });
     ok('nothing can be published on an archived proposal', !pubArchived.ok && /archived/.test(pubArchived.text), pubArchived.text);
+    const saveArchived = await rest('PATCH', `texc_drafts?proposal_id=eq.${pid}`, { updated_by: 'proof-race' });
+    ok('nothing can be saved on an archived proposal, even straight to the database', !saveArchived.ok && /archived/.test(saveArchived.text), saveArchived.text);
     const accArchived = await rpc('texc_accept', { p: acc(revs.json[1].id) });
     ok('nothing can be accepted on an archived proposal', !accArchived.ok && /archived/.test(accArchived.text), accArchived.text);
     const active = await rpc('texc_overview', { p: { archived: false } });
@@ -259,7 +262,39 @@ export async function runSchemaProof({ log = () => {} } = {}) {
     ok('the overview leaves archived proposals out when asked', active.ok && !active.json.some((x) => x.id === pid) && all.json.some((x) => x.id === pid && x.archived_at));
     const restored = await rpc('texc_set_archived', { p: { proposal_id: pid, archive: false, actor: 'proof' } });
     const back = await rest('GET', `texc_proposals?id=eq.${pid}&select=archived_at,archive_reason`);
+    const behind = await rpc('texc_publish', { p: revision(3, { current_accepted: false }) });
+    ok('a revision built before a client accepted cannot be published over the acceptance', !behind.ok && /accepted meanwhile/.test(behind.text), behind.text);
     ok('restoring brings it back and is recorded', restored.ok && restored.json.changed === true && !back.json[0].archived_at && !back.json[0].archive_reason && archEvents() === 'archived,restored', [restored.text, back.json, archEvents()]);
+
+    log('Purge: the one door, and only for what may go');
+    const purgeAccepted = await rpc('texc_purge', { p: { proposal_id: pid, reference: ref1.json } });
+    ok('a proposal that is not archived cannot be purged', !purgeAccepted.ok && /not archived/.test(purgeAccepted.text), purgeAccepted.text);
+    await rpc('texc_set_archived', { p: { proposal_id: pid, archive: true, actor: 'proof', reason: 'Proof of the purge refusals' } });
+    q(`update public.texc_proposals set archived_at = now() - interval '200 days' where id = '${pid}'`);
+    const purgeKept = await rpc('texc_purge', { p: { proposal_id: pid, reference: ref1.json } });
+    ok('an accepted proposal is never purged, however long it has been archived', !purgeKept.ok && /accepted proposals are kept/.test(purgeKept.text), purgeKept.text);
+    await rpc('texc_set_archived', { p: { proposal_id: pid, archive: false, actor: 'proof' } });
+    // A second proposal, with something in every table that hangs off one.
+    const gone = (await rest('POST', 'texc_proposals', { slug: hex(5), created_by: 'proof@example.com' })).json[0].id;
+    await rest('POST', 'texc_drafts', { proposal_id: gone, config: { meta: { project: 'To be purged' } }, updated_by: 'proof@example.com' });
+    const gref = (await rpc('texc_claim_reference', { p_proposal: gone, p_prefix: 'PROOF-P' })).json;
+    const gpub = await rpc('texc_publish', { p: { ...revision(1), proposal_id: gone, reference: gref, access_token: hex(32), passphrase_enc: 'vault:gone' } });
+    await rpc('texc_record_view', { p: { proposal_id: gone, revision_id: gpub.json.revision_id, session: 'g1' } });
+    await rest('POST', 'texc_attachments', { proposal_id: gone, storage_path: `proposals/${gone}/attachments/x.pdf`, sha256: sha('g'), uploaded_by: 'proof@example.com' });
+    await rpc('texc_set_archived', { p: { proposal_id: gone, archive: true, actor: 'proof', reason: 'Client did not proceed' } });
+    const tooSoon = await rpc('texc_purge', { p: { proposal_id: gone, reference: gref } });
+    ok('a proposal archived less than 90 days ago cannot be purged', !tooSoon.ok && /90 days/.test(tooSoon.text), tooSoon.text);
+    q(`update public.texc_proposals set archived_at = now() - interval '91 days' where id = '${gone}'`);
+    const wrongRef = await rpc('texc_purge', { p: { proposal_id: gone, reference: 'PROOF-P-1999-999' } });
+    ok('a purge naming the wrong reference is refused', !wrongRef.ok && /reference/.test(wrongRef.text), wrongRef.text);
+    const swept = await rpc('texc_purge', { p: { proposal_id: gone, reference: gref } });
+    const left = q(`select (select count(*) from public.texc_proposals where id = '${gone}') + (select count(*) from public.texc_drafts where proposal_id = '${gone}')
+      + (select count(*) from public.texc_proposal_revisions where proposal_id = '${gone}') + (select count(*) from public.texc_events where proposal_id = '${gone}')
+      + (select count(*) from public.texc_proposal_views where proposal_id = '${gone}') + (select count(*) from public.texc_attachments where proposal_id = '${gone}')
+      + (select count(*) from public.texc_revision_keys where revision_id = '${gpub.json.revision_id}')`);
+    ok('purging after 90 days removes the proposal and everything of it, and says what went', swept.ok && swept.json.revisions === 1 && swept.json.views === 1 && swept.json.files === 1 && left === '0', [swept.text, left]);
+    const stillGuarded = await rest('DELETE', `texc_events?proposal_id=eq.${pid}`);
+    ok('after a purge the logs are append-only again (the flag did not outlive it)', !stillGuarded.ok, stillGuarded.status);
 
     const wd = await rpc('texc_withdraw', { p_proposal: pid, p_actor: 'proof', p_note: 'sent in error' });
     const wrev = await rest('GET', `texc_proposal_revisions?id=eq.${revs.json[1].id}&select=withdrawn_at`);

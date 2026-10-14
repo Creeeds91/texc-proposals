@@ -8,7 +8,10 @@
  *   POST { action: 'url',      proposal, id, download }         → { url, name }             (editor+, 60 s)
  *
  * Only staff ever upload. A client reaches a file through api/attachment.js,
- * and only one a published revision offered them.
+ * and only one a published revision offered them. An archived proposal's
+ * files can be listed and opened, never changed. A proposal holds at most
+ * STORED_CAP stored files, checked or not: an upload begun and never checked
+ * still takes room, and the unchecked ones are cleared when it fills.
  */
 import { db, rest } from '../lib/db.js';
 import { body, refuseCrossSite, onlyMethods, noStore } from '../lib/http.js';
@@ -17,7 +20,7 @@ import { getProposal } from '../lib/proposals.js';
 import { recordEvent, recordAudit } from '../lib/events.js';
 import { signUpload, signUrl, ATTACH_BUCKET } from '../lib/storage.js';
 import {
-  MAX_BYTES, PER_PROPOSAL, SHA_RE, cleanName, attachmentPath, forEditor, listFiles, getFile, findBySha, verifyUpload,
+  MAX_BYTES, PER_PROPOSAL, STORED_CAP, SHA_RE, cleanName, attachmentPath, forEditor, listFiles, getFile, findBySha, verifyUpload, storedCount, sweepUnrecorded,
 } from '../lib/attachments.js';
 import { rateLimited, tooMany } from '../lib/ratelimit.js';
 
@@ -35,6 +38,7 @@ export default async function handler(req, res) {
   const prop = await getProposal(d, pid);
   if (!prop) { res.status(404).json({ error: 'No such proposal.' }); return; }
   const fail = (status, error, extra = {}) => res.status(status).json({ error, ...extra });
+  if (prop.archived_at && ['begin', 'verify', 'override'].includes(action)) { fail(409, 'This proposal is archived. Restore it to change its documents.'); return; }
 
   if (action === 'list') {
     const rows = await listFiles(d, pid);
@@ -56,10 +60,15 @@ export default async function handler(req, res) {
       if (!Number.isSafeInteger(size) || size <= 0) { fail(400, 'That upload was not understood.'); return; }
       if (size > MAX_BYTES) { fail(413, 'That file is larger than 25 MB.'); return; }
       const existing = await findBySha(d, pid, sha);
-      if (existing) { res.status(200).json({ file: forEditor(existing) }); return; }
+      if (existing && existing.scan_status !== 'pending') { res.status(200).json({ file: forEditor(existing) }); return; }
       const rows = await listFiles(d, pid);
       if (!rows) { fail(503, 'The files could not be listed.'); return; }
       if (rows.length >= PER_PROPOSAL) { fail(409, `A proposal can carry up to ${PER_PROPOSAL} files.`); return; }
+      // Uploads begun and never checked still take room; when it is full, those go first.
+      let stored = await storedCount(pid);
+      if (stored !== null && stored >= STORED_CAP) { await sweepUnrecorded(d, pid); stored = await storedCount(pid); }
+      if (stored === null) { fail(503, 'The upload could not be started. Try again.'); return; }
+      if (stored >= STORED_CAP) { fail(409, `This proposal already holds ${stored} stored files. Remove some before adding more.`); return; }
       const uploadUrl = await signUpload(ATTACH_BUCKET, attachmentPath(pid, sha, name));
       if (!uploadUrl) { fail(503, 'The upload could not be started. Try again.'); return; }
       res.status(200).json({ uploadUrl });
