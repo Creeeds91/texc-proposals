@@ -620,7 +620,8 @@ function renderAttachments(v) {
       ic.append(icon('file-text'));
       const body = el('div', 'att-body');
       body.append(el('p', 'att-title', str(a.title)));
-      const bits = [str(a.docCode), str(a.docRev) ? 'Rev ' + str(a.docRev) : '', fmtDate(a.docDate),
+      // A library document that lapses says until when (Phase 8); older revisions have no expiresOn.
+      const bits = [str(a.docCode), str(a.docRev) ? 'Rev ' + str(a.docRev) : '', fmtDate(a.docDate), str(a.expiresOn) ? 'Current to ' + fmtDate(a.expiresOn) : '',
         Number.isFinite(a.pages) ? `${a.pages} ${a.pages === 1 ? 'page' : 'pages'}` : '', fmtBytes(a.bytes)].filter(Boolean);
       body.append(el('p', 'att-meta', bits.join(' · ')));
       const actions = el('div', 'att-actions');

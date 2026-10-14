@@ -24,7 +24,7 @@ import { previewMedia, uploadMedia } from './media.js';
 import { openChecklist } from './checklist.js';
 import { api } from './api.js';
 import { openPeople } from './people.js';
-import { loadFiles, filesContext, previewHook } from './attachments.js';
+import { loadFiles, filesContext, loadLibrary, evidenceContext, withLibrary, previewHook } from './attachments.js';
 
 const D = document;
 const ROOT = D.documentElement;
@@ -92,7 +92,7 @@ function schedulePreview() {
   previewQueued = true;
   requestAnimationFrame(async () => {
     previewQueued = false;
-    applyConfig(withIssue(await previewMedia(state.cfg, PROPOSAL_ID)));
+    applyConfig(withIssue(withLibrary(await previewMedia(state.cfg, PROPOSAL_ID))));
   });
 }
 
@@ -153,7 +153,7 @@ const ctx = {
   },
   checkCtx: () => {
     const a = state.proposal && (state.proposal.acceptances || []).find((x) => x.current);
-    return { today: today(), services: TPL.services, register: TPL.register, brand: BRAND.name, files: filesContext(),
+    return { today: today(), services: TPL.services, register: TPL.register, brand: BRAND.name, files: filesContext(), evidence: evidenceContext(),
       accepted: a ? { rev: a.rev, name: a.name, acceptedAt: a.acceptedAt } : null };
   },
   reveal(section, field) {
@@ -210,8 +210,9 @@ function moveSection(id, delta) {
 
 function dropSection(dragged, target, after) {
   if (dragged === target || !MOVABLE(dragged) || !MOVABLE(target)) return;
-  const list = state.cfg.layout.sections.filter((s) => s.id !== dragged);
   const item = state.cfg.layout.sections.find((s) => s.id === dragged);
+  if (!item) return; // not a panel being moved (a file, or anything else dropped here)
+  const list = state.cfg.layout.sections.filter((s) => s.id !== dragged);
   const at = list.findIndex((s) => s.id === target) + (after ? 1 : 0);
   list.splice(at, 0, item);
   ctx.set('layout.sections', list, { structural: true });
@@ -284,7 +285,7 @@ function renderPanel(id, num, visible) {
   }
   panel.append(head);
   panel.addEventListener('dragover', (e) => {
-    if (!MOVABLE(id)) return;
+    if (!MOVABLE(id) || [...(e.dataTransfer.types || [])].includes('Files')) return;
     e.preventDefault();
     const r = panel.getBoundingClientRect();
     panel.dataset.drop = e.clientY > r.top + r.height / 2 ? 'after' : 'before';
@@ -521,6 +522,7 @@ function menu() {
   dlg.append(
     h('div', { class: 'ed-dialog-head' }, h('h2', { text: 'Menu' }), h('button', { type: 'button', class: 'ed-icon', 'aria-label': 'Close', onclick: () => dlg.close() }, icon('x'))),
     item('Dashboard and archive', 'chart-column', () => location.assign('/dashboard')),
+    item('Documents library', 'file-check', () => location.assign('/documents')),
     item('All proposals', 'list', () => openPicker()),
     item('New proposal', 'file-text', () => createAndOpen(newProposal())),
     item('Replace with the demo (fictional client)', 'book-open', async () => {
@@ -659,7 +661,7 @@ async function boot() {
   renderStatus();
   // The preview's View and Download buttons open this proposal's own files.
   setHooks({ attachment: previewHook(ctx) });
-  applyConfig(withIssue(await previewMedia(state.cfg, PROPOSAL_ID)));
+  applyConfig(withIssue(withLibrary(await previewMedia(state.cfg, PROPOSAL_ID))));
   initEffects(D);
   ROOT.classList.add('ready');
   if (location.hash === '#people' && ctx.isAdmin()) openPeople(ctx);
@@ -671,6 +673,12 @@ async function boot() {
     if (!ok) { toast('The attached files could not be loaded. Reload to try again.'); return; }
     state.filesLoaded = true;
     if (state.open.has('attachments')) renderDrawer(); else updateBadges();
+  });
+  // The document library (Phase 8): which documents a card can offer, and how each stands.
+  loadLibrary().then((ok) => {
+    if (!ok) { toast('The document library could not be loaded. Reload to try again.'); return; }
+    if (state.open.has('attachments')) renderDrawer(); else updateBadges();
+    schedulePreview();
   });
 
   window.addEventListener('beforeunload', (e) => { if (saver.dirty()) { saver.flush(); e.preventDefault(); } });

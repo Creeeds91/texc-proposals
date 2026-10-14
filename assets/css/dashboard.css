@@ -194,11 +194,12 @@ body.db { background: var(--paper); color: var(--ink); min-height: 100vh; }
   .db-split { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 760px) {
-  .db-top-inner { gap: var(--space-3); padding: 0 var(--space-4); }
+  /* Two rows on a phone: the mark and Sign out, then every page across the full width. */
+  .db-top-inner { gap: 0 var(--space-3); padding: var(--space-2) var(--space-4) 0; height: auto; flex-wrap: wrap; }
   .db-brand img { height: 20px; }
   .db-brand span, .db-who span { display: none; }
-  .db-nav { gap: var(--space-3); }
-  .db-nav a { font-size: 11px; letter-spacing: 0.06em; }
+  .db-nav { order: 3; flex: 1 1 100%; gap: var(--space-4); }
+  .db-nav a { font-size: 11px; letter-spacing: 0.06em; padding: var(--space-3) 0; }
   .db-head { align-items: flex-start; flex-direction: column; }
   .db-figures .db-section-head .db-control { flex: 1 1 100%; }
   .db-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }

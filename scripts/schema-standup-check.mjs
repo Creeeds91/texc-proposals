@@ -13,6 +13,8 @@
  *     append-only logs, and expects every attempt refused;
  *   - searches, reads the dashboard overview, archives and restores;
  *   - purges: only archived for 90 days, never accepted, and nothing left.
+ *   - the document library: an approved file is a record (never changed or
+ *     deleted), and a purge leaves the library alone.
  *
  *   node scripts/schema-standup-check.mjs        a fresh local stack, deleted afterwards
  *
@@ -31,13 +33,14 @@ const SCHEMA = resolve(ROOT, 'supabase/schema.sql');
 
 export const TABLES = ['texc_users', 'texc_login_tokens', 'texc_user_sessions', 'texc_proposals', 'texc_proposal_revisions',
   'texc_revision_keys', 'texc_drafts', 'texc_events', 'texc_proposal_views', 'texc_settings', 'texc_counters',
-  'texc_rate_limits', 'texc_staff_audit', 'texc_attachments', 'texc_acceptances'];
+  'texc_rate_limits', 'texc_staff_audit', 'texc_attachments', 'texc_acceptances', 'texc_evidence', 'texc_evidence_versions'];
 const RPCS = {
   texc_rate_hit: { p_key: 'x', p_max: 1, p_window_seconds: 60 },
   texc_claim_reference: { p_proposal: '00000000-0000-0000-0000-000000000000', p_prefix: 'X' },
   texc_publish: { p: {} }, texc_rotate: { p: {} }, texc_withdraw: { p_proposal: '00000000-0000-0000-0000-000000000000', p_actor: 'x', p_note: '' },
   texc_record_view: { p: {} }, texc_accept: { p: {} },
   texc_set_archived: { p: {} }, texc_search: { p_q: 'x' }, texc_overview: { p: {} }, texc_purge: { p: {} },
+  texc_evidence_usage: {},
 };
 
 const hex = (n) => randomBytes(n).toString('hex');
@@ -266,6 +269,29 @@ export async function runSchemaProof({ log = () => {} } = {}) {
     ok('a revision built before a client accepted cannot be published over the acceptance', !behind.ok && /accepted meanwhile/.test(behind.text), behind.text);
     ok('restoring brings it back and is recorded', restored.ok && restored.json.changed === true && !back.json[0].archived_at && !back.json[0].archive_reason && archEvents() === 'archived,restored', [restored.text, back.json, archEvents()]);
 
+    log('The document library: an approved file is a record');
+    const orgBad = await rest('POST', 'texc_evidence', { owner_kind: 'organisation', owner_ref: 'george-scott', kind: 'insurance', title: 'x', created_by: 'proof@example.com' });
+    const personBad = await rest('POST', 'texc_evidence', { owner_kind: 'person', owner_ref: '', kind: 'compliance', title: 'x', created_by: 'proof@example.com' });
+    ok('a library document belongs to the organisation or to one named person, never both or neither', !orgBad.ok && !personBad.ok, [orgBad.status, personBad.status]);
+    const item = (await rest('POST', 'texc_evidence', { owner_kind: 'organisation', kind: 'insurance', title: 'Certificate of currency', currency: 'expires', created_by: 'proof@example.com' })).json[0].id;
+    const lv1 = (await rest('POST', 'texc_evidence_versions', { evidence_id: item, storage_path: `library/${item}/${sha('lib1')}-coc.pdf`, sha256: sha('lib1'), uploaded_by: 'proof@example.com' })).json[0].id;
+    const early = await rest('PATCH', `texc_evidence_versions?id=eq.${lv1}`, { approved_by: 'proof@example.com', approved_at: new Date().toISOString() });
+    ok('a file that has not passed the check cannot be approved', !early.ok && /passed the check/.test(early.text), early.text);
+    await rest('PATCH', `texc_evidence_versions?id=eq.${lv1}`, { scan_status: 'clean', bytes: 1000, pages: 1, expires_on: '2027-06-30', doc_rev: '1' });
+    const approve = await rest('PATCH', `texc_evidence_versions?id=eq.${lv1}`, { approved_by: 'proof@example.com', approved_at: new Date().toISOString() });
+    ok('a checked file is approved', approve.ok && approve.json[0].approved_at, approve.text);
+    const relabel = await rest('PATCH', `texc_evidence_versions?id=eq.${lv1}`, { expires_on: '2099-12-31' });
+    const unapprove = await rest('PATCH', `texc_evidence_versions?id=eq.${lv1}`, { approved_at: null });
+    const dropV1 = await rest('DELETE', `texc_evidence_versions?id=eq.${lv1}`);
+    ok('an approved file never changes and is never deleted (a revision may point at it)', !relabel.ok && !unapprove.ok && !dropV1.ok, [relabel.status, unapprove.status, dropV1.status]);
+    const dropItem = await rest('DELETE', `texc_evidence?id=eq.${item}`);
+    ok('a library document with an approved file is retired, never deleted', !dropItem.ok && /retired/.test(dropItem.text), dropItem.text);
+    const lv2 = (await rest('POST', 'texc_evidence_versions', { evidence_id: item, storage_path: `library/${item}/${sha('lib2')}-coc.pdf`, sha256: sha('lib2'), uploaded_by: 'proof@example.com' })).json[0].id;
+    const moved = await rest('PATCH', `texc_evidence_versions?id=eq.${lv2}`, { storage_path: `proposals/${pid}/attachments/x.pdf` });
+    const discard = await rest('DELETE', `texc_evidence_versions?id=eq.${lv2}`);
+    ok('a file not yet approved keeps its path, and can be discarded', !moved.ok && discard.ok && discard.json.length === 1, [moved.status, discard.status]);
+    const sent = { card: 'a1', evidence: item, version: lv1, file: lv1, path: `library/${item}/${sha('lib1')}-coc.pdf`, sha256: sha('lib1'), expiresOn: '2027-06-30' };
+
     log('Purge: the one door, and only for what may go');
     const purgeAccepted = await rpc('texc_purge', { p: { proposal_id: pid, reference: ref1.json } });
     ok('a proposal that is not archived cannot be purged', !purgeAccepted.ok && /not archived/.test(purgeAccepted.text), purgeAccepted.text);
@@ -278,7 +304,12 @@ export async function runSchemaProof({ log = () => {} } = {}) {
     const gone = (await rest('POST', 'texc_proposals', { slug: hex(5), created_by: 'proof@example.com' })).json[0].id;
     await rest('POST', 'texc_drafts', { proposal_id: gone, config: { meta: { project: 'To be purged' } }, updated_by: 'proof@example.com' });
     const gref = (await rpc('texc_claim_reference', { p_proposal: gone, p_prefix: 'PROOF-P' })).json;
-    const gpub = await rpc('texc_publish', { p: { ...revision(1), proposal_id: gone, reference: gref, access_token: hex(32), passphrase_enc: 'vault:gone' } });
+    const gpub = await rpc('texc_publish', { p: { ...revision(1), proposal_id: gone, reference: gref, access_token: hex(32), passphrase_enc: 'vault:gone', attachments_snapshot: [sent] } });
+    await rest('PATCH', `texc_drafts?proposal_id=eq.${gone}`, { config: { meta: { project: 'To be purged' }, attachments: [{ id: 'a1', evidence: item }] } });
+    const usage = (await rpc('texc_evidence_usage', {})).json || {};
+    ok('the library counts where each document was sent and where it is offered now', usage[item] && usage[item].revisions === 1 && usage[item].proposals === 1 && usage[item].drafts === 1, usage);
+    const gov = ((await rpc('texc_overview', { p: {} })).json || []).find((o) => o.id === gone);
+    ok('the overview carries the soonest expiry of the documents a revision sent', gov && gov.docs_expire_on === '2027-06-30', gov && gov.docs_expire_on);
     await rpc('texc_record_view', { p: { proposal_id: gone, revision_id: gpub.json.revision_id, session: 'g1' } });
     await rest('POST', 'texc_attachments', { proposal_id: gone, storage_path: `proposals/${gone}/attachments/x.pdf`, sha256: sha('g'), uploaded_by: 'proof@example.com' });
     await rpc('texc_set_archived', { p: { proposal_id: gone, archive: true, actor: 'proof', reason: 'Client did not proceed' } });
@@ -293,6 +324,8 @@ export async function runSchemaProof({ log = () => {} } = {}) {
       + (select count(*) from public.texc_proposal_views where proposal_id = '${gone}') + (select count(*) from public.texc_attachments where proposal_id = '${gone}')
       + (select count(*) from public.texc_revision_keys where revision_id = '${gpub.json.revision_id}')`);
     ok('purging after 90 days removes the proposal and everything of it, and says what went', swept.ok && swept.json.revisions === 1 && swept.json.views === 1 && swept.json.files === 1 && left === '0', [swept.text, left]);
+    const kept = q(`select (select count(*) from public.texc_evidence where id = '${item}') || ',' || (select count(*) from public.texc_evidence_versions where id = '${lv1}' and approved_at is not null)`);
+    ok('a purge leaves the document library alone (its files are not the proposal\'s)', kept === '1,1', kept);
     const stillGuarded = await rest('DELETE', `texc_events?proposal_id=eq.${pid}`);
     ok('after a purge the logs are append-only again (the flag did not outlive it)', !stillGuarded.ok, stillGuarded.status);
 

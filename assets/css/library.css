@@ -1,0 +1,52 @@
+/*
+ * The Documents page (templates/library.html). Built on dashboard.css: the
+ * same page, panel, filters and controls; this adds the library's own list,
+ * standing chips, files and forms. Tokens only (check.mjs design).
+ */
+
+.lib-attention { margin-bottom: var(--space-6); }
+.lib-attention .db-follow-list { grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
+
+.lib-group { margin-top: var(--space-5); }
+.lib-group > .db-h3 { margin-bottom: var(--space-3); }
+.lib-items { display: grid; gap: var(--space-2); }
+.lib-item { display: flex; gap: var(--space-4); align-items: flex-start; justify-content: space-between; background: var(--white); border: 1px solid var(--doc-rule); border-radius: var(--radius-md); padding: var(--space-3) var(--space-4); }
+.lib-item-main { min-width: 0; display: grid; gap: 2px; }
+.lib-item-title { font: inherit; font-weight: 700; color: var(--ink); background: none; border: 0; padding: 0; text-align: left; cursor: pointer; text-decoration: underline; text-decoration-color: var(--doc-rule); text-underline-offset: 3px; min-height: 40px; }
+.lib-item-title:hover { text-decoration-color: var(--doc-gold-text); }
+.lib-item-facts, .lib-item-used { font-size: var(--text-sm); color: var(--ink-on-paper-muted); overflow-wrap: anywhere; }
+.lib-item-state { display: grid; gap: var(--space-2); justify-items: end; flex: none; }
+
+/* A standing is an icon AND its words; the status colours mark only what they mean. */
+.lib-chip { display: inline-flex; align-items: center; gap: 6px; min-height: 26px; padding: 2px 10px; border: 1px solid var(--doc-rule); border-radius: var(--radius-pill); background: var(--white); font-size: var(--text-xs); font-weight: 700; }
+.lib-chip .ic { width: 14px; height: 14px; flex: none; }
+.lib-chip--current { border-color: var(--go); }
+.lib-chip--current .ic { color: var(--go); }
+.lib-chip--expiring, .lib-chip--awaiting { background: var(--caution); border-color: var(--caution); color: var(--ink); }
+.lib-chip--expired, .lib-chip--refused, .lib-chip--none { border-color: var(--stop); }
+.lib-chip--expired .ic, .lib-chip--refused .ic, .lib-chip--none .ic { color: var(--stop); }
+.lib-chip--retired { background: var(--doc-band); color: var(--ink-on-paper-muted); }
+
+/* One document's files, in the side panel. */
+.lib-version { border: 1px solid var(--doc-rule); border-radius: var(--radius-md); padding: var(--space-3); margin-bottom: var(--space-3); display: grid; gap: var(--space-3); }
+.lib-verdict { display: flex; gap: 6px; align-items: center; font-weight: 700; font-size: var(--text-sm); }
+.lib-verdict .ic { width: 16px; height: 16px; }
+.lib-verdict--clean .ic, .lib-verdict--override .ic { color: var(--go); }
+.lib-verdict--rejected .ic, .lib-verdict--cannot-verify .ic { color: var(--stop); }
+.lib-reasons { margin: var(--space-2) 0 0 var(--space-5); list-style: disc; font-size: var(--text-sm); }
+.lib-approve { display: grid; gap: var(--space-3); border-top: 1px solid var(--doc-rule); padding-top: var(--space-3); }
+.lib-form-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: var(--space-3); }
+.lib-form-grid input, .lib-form-grid select { min-height: 44px; }
+.lib-facts-form { display: grid; gap: var(--space-4); }
+.lib-upload { display: grid; gap: var(--space-2); justify-items: start; border: 1px dashed var(--steel-500); border-radius: var(--radius-md); padding: var(--space-4); margin: var(--space-4) 0; }
+.lib-upload.is-over { border-color: var(--doc-gold-text); background: var(--doc-band); }
+.lib-upload progress { width: 100%; }
+.lib-file { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+.lib-earlier { display: grid; gap: var(--space-2); font-size: var(--text-sm); }
+.lib-earlier li { display: flex; gap: var(--space-3); justify-content: space-between; align-items: center; flex-wrap: wrap; }
+
+@media (max-width: 760px) {
+  .lib-item { flex-direction: column; }
+  .lib-item-state { justify-items: start; }
+}
+.lib-form-grid input[type="date"] { border: 1px solid var(--doc-rule); border-radius: var(--radius-md); background: var(--white); color: var(--ink); font: inherit; font-size: var(--text-sm); padding: 0 var(--space-3); min-width: 0; }

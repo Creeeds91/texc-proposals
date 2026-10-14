@@ -25,6 +25,8 @@
  *   editor        the editor against the real stack: edits, rows, CONFIRM, upload,
  *                 checklist, server autosave, a colleague's conflicting save, phone   (stack + browser)
  *   flow          staff to client: publish, unlock, revise, supersede, rotate, approve a person   (stack + browser)
+ *   library       the document library: roles, the file check, approval, publishing a library
+ *                 document, a renewal, retiring, and a purge leaving it alone   (stack)
  *   deploy        scripts/deploy-check.mjs against the local app, signed in, and against a
  *                 careless server it must catch (it is run against a real preview by hand)   (stack)
  *   attachments   the PDF check: built fixtures for each way a file can be unsafe, TEXC's
@@ -50,7 +52,7 @@ import { runChecks } from '../assets/js/checks.js';
 import { scanText, localityWarning } from '../assets/js/sensitive.js';
 import { inspectPdf } from '../lib/pdf-inspect.js';
 import { FIXTURES as PDF_FIXTURES } from './lib/pdf-fixtures.mjs';
-import { suiteSchema, suiteEnvelope, suiteRefusals, suiteAcceptance, suiteEditor, suiteFlow, suiteDashboard, suiteA11y, suiteDeploy, closeServerSuites } from './lib/server-suites.mjs';
+import { suiteSchema, suiteEnvelope, suiteRefusals, suiteAcceptance, suiteEditor, suiteFlow, suiteDashboard, suiteA11y, suiteDeploy, suiteLibrary, closeServerSuites } from './lib/server-suites.mjs';
 import * as LC from '../assets/js/lifecycle.js';
 import { toCsv, cell, COLUMNS as CSV_COLUMNS } from '../lib/report.js';
 
@@ -148,7 +150,7 @@ const BRAND_PATTERNS = [/TEXC/, /0467\s?651\s?182/, /47\s?688\s?368\s?881/, /man
 
 function suiteBrand() {
   const files = [
-    ...walk('api', ['.js']), ...walk('lib', ['.js']).filter((f) => !['lib/brand.js', 'lib/editor-html.js', 'lib/signin-html.js', 'lib/dashboard-html.js', 'lib/template-data.js', 'lib/demo-fixture.js'].includes(f)),
+    ...walk('api', ['.js']), ...walk('lib', ['.js']).filter((f) => !['lib/brand.js', 'lib/editor-html.js', 'lib/signin-html.js', 'lib/dashboard-html.js', 'lib/library-html.js', 'lib/template-data.js', 'lib/demo-fixture.js'].includes(f)),
     ...walk('assets/js', ['.js']), ...walk('scripts', ['.mjs', '.js']).filter((f) => f !== 'scripts/check.mjs'),
     ...walk('templates', ['.html']),
   ];
@@ -174,7 +176,7 @@ function suiteCsp() {
   let views;
   try { views = build({ write: false }); }
   catch (e) { return { status: FAIL, detail: [e.message] }; }
-  const HTML_MODULES = new Set(['lib/editor-html.js', 'lib/signin-html.js', 'lib/dashboard-html.js']);
+  const HTML_MODULES = new Set(['lib/editor-html.js', 'lib/signin-html.js', 'lib/dashboard-html.js', 'lib/library-html.js']);
   for (const [name, body] of Object.entries(views)) {
     const isEditor = name === 'lib/editor-html.js';
     // Pages served by functions are string modules; check the page inside them.
@@ -357,6 +359,8 @@ function suiteLifecycle() {
   expect(LC.followUps(row({ valid_until: '2026-10-13' }), now)[0].text === 'Valid until today' && kinds({ valid_until: '2026-10-25' }) === '', 'valid until today, and not when it is weeks away');
   expect(kinds({ changes_requested_at: ago(1), valid_until: '2026-10-15', rev_published_at: ago(9) }).startsWith('changes,expiring'), 'a request for changes comes first');
   expect(kinds({ last_accepted_rev: 'A', rev: 'B' }) === 'reaccept', `revised after acceptance: ${kinds({ last_accepted_rev: 'A', rev: 'B' })}`);
+  expect(kinds({ docs_expire_on: '2026-10-20' }) === 'document' && LC.followUps(row({ docs_expire_on: '2026-10-20' }), now)[0].text === 'A document it sent expires in 7 days'
+    && /expired on/.test(LC.followUps(row({ docs_expire_on: '2026-10-01' }), now)[0].text) && kinds({ docs_expire_on: '2026-12-31' }) === '', 'a document the revision sent lapsing within 14 days, or already lapsed (Phase 8)');
   expect(kinds({ ...unopened, is_test: true, rev_published_at: ago(9) }) === '' && kinds({ current_accepted_at: ago(1), valid_until: '2026-10-14' }) === '', 'practice and accepted proposals never ask for a call');
 
   // 3. Periods are Hobart calendar periods; the financial year starts 1 July.
@@ -406,7 +410,7 @@ function suiteLifecycle() {
   expect(cell(null) === '""' && cell('Ashgrove Civil Pty Ltd') === '"Ashgrove Civil Pty Ltd"' && cell('\tx') === '"\'\tx"', 'ordinary cells are only quoted');
 
   return fails.length ? { status: FAIL, detail: fails } : { status: PASS, detail: [
-    `${states.length} state cases in precedence order; follow-ups for unopened, quiet, expiring, changes requested and re-acceptance; none for practice or accepted proposals`,
+    `${states.length} state cases in precedence order; follow-ups for unopened, quiet, expiring, a sent document lapsing, changes requested and re-acceptance; none for practice or accepted proposals`,
     'periods and months are Hobart calendar periods (the financial year turns at midnight in Hobart); figures are for the issued cohort, win rate leaves out withdrawn, practice never counts',
     'list filters keep archived proposals out unless asked; the CSV quotes every cell and defuses =, +, -, @ and tab',
   ] };
@@ -879,7 +883,7 @@ const SUITES = {
   confirm: suiteConfirm, render: suiteRender, print: suitePrint, 'content-sync': suiteContentSync,
   lifecycle: suiteLifecycle,
   schema: suiteSchema, envelope: () => suiteEnvelope({ browserSession }), refusals: suiteRefusals, acceptance: suiteAcceptance, editor: suiteEditor, flow: suiteFlow,
-  dashboard: suiteDashboard, a11y: suiteA11y, budget: suiteBudget, lighthouse: suiteLighthouse, deploy: suiteDeploy,
+  dashboard: suiteDashboard, library: suiteLibrary, a11y: suiteA11y, budget: suiteBudget, lighthouse: suiteLighthouse, deploy: suiteDeploy,
 };
 
 const wanted = args.filter((a) => !a.startsWith('--'));

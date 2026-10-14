@@ -15,56 +15,14 @@ import {
 } from './lifecycle.js';
 import { DOC_TYPES } from './schema.js';
 import { formatAUD } from './money.js';
+import { h, s, icon, apiFor } from './staff-ui.js';
 
 const D = document;
 const $ = (id) => D.getElementById(id);
-const SVG = 'http://www.w3.org/2000/svg';
 
 /* ------------------------------------------------------------------ small helpers */
 
-function h(tag, attrs = {}, ...children) {
-  const el = D.createElement(tag);
-  for (const [k, v] of Object.entries(attrs || {})) {
-    if (v == null || v === false) continue;
-    if (k === 'class') el.className = v;
-    else if (k === 'text') el.textContent = v;
-    else if (k.startsWith('on') && typeof v === 'function') el.addEventListener(k.slice(2).toLowerCase(), v);
-    else if (v === true) el.setAttribute(k, '');
-    else el.setAttribute(k, String(v));
-  }
-  for (const c of children.flat(Infinity)) {
-    if (c == null || c === false) continue;
-    el.append(c instanceof Node ? c : D.createTextNode(String(c)));
-  }
-  return el;
-}
-
-function s(tag, attrs = {}, ...children) {
-  const el = D.createElementNS(SVG, tag);
-  for (const [k, v] of Object.entries(attrs)) if (v != null) el.setAttribute(k, String(v));
-  for (const c of children) if (c) el.append(c instanceof Node ? c : D.createTextNode(String(c)));
-  return el;
-}
-
-function icon(name, cls = 'ic') {
-  return s('svg', { class: cls, 'aria-hidden': 'true' }, s('use', { href: `/assets/img/icons.svg#${name}` }));
-}
-
-async function api(method, path, payload) {
-  try {
-    const r = await fetch(path, {
-      method, credentials: 'same-origin', cache: 'no-store',
-      headers: { 'Content-Type': 'application/json' },
-      body: payload === undefined ? undefined : JSON.stringify(payload),
-    });
-    if (r.status === 401) { location.assign(`/signin?next=${encodeURIComponent('/dashboard')}`); return { ok: false, status: 401, json: null }; }
-    let json = null;
-    try { json = await r.json(); } catch { json = null; }
-    return { ok: r.ok, status: r.status, json };
-  } catch {
-    return { ok: false, status: 0, json: { error: 'No connection. Try again.' } };
-  }
-}
+const api = apiFor('/dashboard');
 
 const dollars = new Intl.NumberFormat('en-AU', { style: 'currency', currency: 'AUD', maximumFractionDigits: 0 });
 const whole = (cents) => (Number.isFinite(Number(cents)) && cents !== null ? dollars.format(Math.round(Number(cents) / 100)) : '—');

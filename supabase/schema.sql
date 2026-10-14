@@ -691,6 +691,7 @@ returns jsonb language sql stable security definer set search_path = '' as $$
       ever.first_accepted_at, ever.last_accepted_rev, ever.last_accepted_subtotal_cents,
       v.views_current, v.sessions_current, v.last_view_current,
       e.docs_opened_current, e.options_current, e.changes_requested_at,
+      dx.docs_expire_on,
       dr.updated_at as draft_updated_at, dr.updated_by as draft_updated_by,
       left(coalesce(dr.config->'client'->>'contactName', ''), 160) as contact
     from public.texc_proposals pr
@@ -710,6 +711,11 @@ returns jsonb language sql stable security definer set search_path = '' as $$
         count(*) filter (where ev.event = 'option_toggled') as options_current,
         max(ev.created_at) filter (where ev.event = 'changes_requested') as changes_requested_at
       from public.texc_events ev where ev.proposal_id = pr.id and ev.revision_id = pr.current_revision_id) e on true
+    -- Phase 8: the soonest a document the current revision sent lapses (a library document's expiry, frozen in its snapshot).
+    left join lateral (
+      select min((x->>'expiresOn')::date) as docs_expire_on
+      from jsonb_array_elements(case when jsonb_typeof(cur.attachments_snapshot) = 'array' then cur.attachments_snapshot else '[]'::jsonb end) x
+      where coalesce(x->>'expiresOn', '') ~ '^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$') dx on true
     left join public.texc_drafts dr on dr.proposal_id = pr.id
     where coalesce((p->>'archived')::boolean, true) or pr.archived_at is null
     order by pr.updated_at desc
@@ -775,6 +781,120 @@ begin
   return counts;
 end $$;
 
+-- ---------------------------------------------------------------- document library (Phase 8)
+
+-- Standing documents, uploaded once and offered on any proposal: the
+-- company's (policies, procedures, SWMS, insurance) and each person's
+-- (licences, qualifications, their own insurance). One table whose owner is
+-- the organisation or a person, as the TEXC app's EvidenceItem
+-- (texc repo, documents/process/app-foundation.md), so it can move there
+-- unchanged. kind is George's own filename prefixes; currency says whether
+-- it lapses. A person is named by their id in the website's team list.
+create table if not exists public.texc_evidence (
+  id          uuid primary key default gen_random_uuid(),
+  owner_kind  text not null check (owner_kind in ('organisation', 'person')),
+  owner_ref   text not null default '' check (owner_ref ~ '^[a-z0-9-]{0,60}$'),
+  kind        text not null check (kind in ('compliance', 'insurance', 'procedure', 'project', 'ssds')),
+  title       text not null check (length(title) between 1 and 160),
+  issuer      text not null default '',
+  number      text not null default '',
+  doc_code    text not null default '',
+  currency    text not null default 'permanent' check (currency in ('permanent', 'expires', 'project')),
+  created_by  text not null,
+  created_at  timestamptz not null default now(),
+  updated_at  timestamptz not null default now(),
+  retired_at  timestamptz,
+  retired_by  text,
+  check ((owner_kind = 'organisation') = (owner_ref = ''))
+);
+drop trigger if exists texc_evidence_touch on public.texc_evidence;
+create trigger texc_evidence_touch before update on public.texc_evidence
+  for each row execute function public.texc_touch_updated_at();
+
+-- Every file a library document has had. The current one is the latest
+-- approved. Once approved a version is a record: it never changes and is
+-- never deleted, because a revision that sent it points at its path. Until
+-- then it can be checked, released, given its facts, approved or discarded.
+create table if not exists public.texc_evidence_versions (
+  id              uuid primary key default gen_random_uuid(),
+  evidence_id     uuid not null references public.texc_evidence (id),
+  storage_path    text not null,
+  original_name   text not null default '',
+  sha256          text not null check (sha256 ~ '^[a-f0-9]{64}$'),
+  bytes           bigint not null default 0,
+  pages           integer,
+  scan_status     text not null default 'pending' check (scan_status in ('pending', 'clean', 'rejected', 'cannot-verify', 'override')),
+  scan_detail     jsonb not null default '{}'::jsonb,
+  scanned_at      timestamptz,
+  override_by     text,
+  override_reason text,
+  doc_rev         text not null default '',
+  doc_date        date,
+  issued_on       date,
+  expires_on      date,
+  uploaded_by     text not null,
+  created_at      timestamptz not null default now(),
+  approved_by     text,
+  approved_at     timestamptz,
+  unique (evidence_id, sha256)
+);
+create index if not exists texc_evidence_versions_item on public.texc_evidence_versions (evidence_id);
+
+create or replace function public.texc_evidence_versions_guard() returns trigger
+language plpgsql set search_path = '' as $$
+begin
+  if tg_op = 'DELETE' then
+    if old.approved_at is not null then
+      raise exception 'an approved library file cannot be deleted' using errcode = '42501';
+    end if;
+    return old;
+  end if;
+  if old.approved_at is not null then
+    raise exception 'an approved library file cannot be changed' using errcode = '42501';
+  end if;
+  if new.approved_at is not null and new.scan_status not in ('clean', 'override') then
+    raise exception 'only a file that passed the check, or was released, can be approved' using errcode = '42501';
+  end if;
+  if (new.id, new.evidence_id, new.storage_path, new.sha256) is distinct from (old.id, old.evidence_id, old.storage_path, old.sha256) then
+    raise exception 'a library file keeps its identity' using errcode = '42501';
+  end if;
+  return new;
+end $$;
+drop trigger if exists texc_evidence_versions_guard on public.texc_evidence_versions;
+create trigger texc_evidence_versions_guard before update or delete on public.texc_evidence_versions
+  for each row execute function public.texc_evidence_versions_guard();
+
+-- A library document that ever had an approved file is kept (retired, never deleted).
+create or replace function public.texc_evidence_guard() returns trigger
+language plpgsql set search_path = '' as $$
+begin
+  if exists (select 1 from public.texc_evidence_versions where evidence_id = old.id and approved_at is not null) then
+    raise exception 'a library document with an approved file is retired, never deleted' using errcode = '42501';
+  end if;
+  return old;
+end $$;
+drop trigger if exists texc_evidence_guard on public.texc_evidence;
+create trigger texc_evidence_guard before delete on public.texc_evidence
+  for each row execute function public.texc_evidence_guard();
+
+-- Where each library document is used: the revisions that sent one of its
+-- files (and their proposals), and the drafts that offer it now.
+create or replace function public.texc_evidence_usage()
+returns jsonb language sql stable security definer set search_path = '' as $$
+  select coalesce(jsonb_object_agg(u.id, jsonb_build_object('revisions', u.revisions, 'proposals', u.proposals, 'drafts', u.drafts)), '{}'::jsonb)
+  from (
+    select ev.id::text as id,
+      count(r.id) as revisions,
+      count(distinct r.proposal_id) as proposals,
+      (select count(*) from public.texc_drafts dr
+        where dr.config->'attachments' @> jsonb_build_array(jsonb_build_object('evidence', ev.id::text))) as drafts
+    from public.texc_evidence ev
+    left join public.texc_proposal_revisions r
+      on r.attachments_snapshot @> jsonb_build_array(jsonb_build_object('evidence', ev.id::text))
+    group by ev.id
+  ) u
+$$;
+
 -- ---------------------------------------------------------------- locked down from birth
 
 do $$
@@ -782,7 +902,8 @@ declare t text;
 begin
   foreach t in array array['texc_users', 'texc_login_tokens', 'texc_user_sessions', 'texc_proposals',
     'texc_proposal_revisions', 'texc_revision_keys', 'texc_drafts', 'texc_events', 'texc_proposal_views',
-    'texc_settings', 'texc_counters', 'texc_rate_limits', 'texc_staff_audit', 'texc_attachments', 'texc_acceptances'] loop
+    'texc_settings', 'texc_counters', 'texc_rate_limits', 'texc_staff_audit', 'texc_attachments', 'texc_acceptances',
+    'texc_evidence', 'texc_evidence_versions'] loop
     execute format('alter table public.%I enable row level security', t);
     execute format('revoke all on table public.%I from anon, authenticated', t);
     execute format('grant all on table public.%I to service_role', t);
@@ -795,7 +916,8 @@ begin
   foreach f in array array['texc_touch_updated_at()', 'texc_refuse_change()', 'texc_revisions_guard()',
     'texc_rate_hit(text, integer, integer)', 'texc_claim_reference(uuid, text)', 'texc_publish(jsonb)',
     'texc_rotate(jsonb)', 'texc_withdraw(uuid, text, text)', 'texc_record_view(jsonb)', 'texc_accept(jsonb)',
-    'texc_set_archived(jsonb)', 'texc_search(text)', 'texc_overview(jsonb)', 'texc_purge(jsonb)', 'texc_drafts_guard()'] loop
+    'texc_set_archived(jsonb)', 'texc_search(text)', 'texc_overview(jsonb)', 'texc_purge(jsonb)', 'texc_drafts_guard()',
+    'texc_evidence_versions_guard()', 'texc_evidence_guard()', 'texc_evidence_usage()'] loop
     execute format('revoke execute on function public.%s from public, anon, authenticated', f);
     execute format('grant execute on function public.%s to service_role', f);
   end loop;

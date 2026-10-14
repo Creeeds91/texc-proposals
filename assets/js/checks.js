@@ -13,11 +13,14 @@
  * ctx: { today: 'YYYY-MM-DD', services: [{slug, pending}], register: [{id, status}], brand: 'name',
  *        files: { <attachment id>: { status } } }   the files on this proposal, when known
  *        (the editor and the server both pass them; without them only "has a file" is checked)
+ *        evidence: { <library document id>: { title, retired, current: { status, expiresOn } | null } }
+ *        the library documents, when known (lib/library.js evidenceContext; the editor builds the same)
  *        accepted: { rev, name, acceptedAt } | null   the current revision's acceptance, if any
  */
 import { SECTIONS, SECTION_OF_KEY, visibleSections, isConfirm } from './schema.js';
 import { scanText, localityWarning } from './sensitive.js';
 import { lineAmountCents } from './money.js';
+import { dayAu } from './library-view.js';
 
 const LABEL = Object.fromEntries(SECTIONS.map((s) => [s.id, s.label]));
 /** A file a client may be sent: it passed the check, or an administrator released it with a reason. */
@@ -36,6 +39,7 @@ const ROW_NAME = {
   'understanding.photos': 'Photograph', 'site.photos': 'Site photograph',
 };
 const str = (v) => (typeof v === 'string' ? v.trim() : '');
+
 const present = (v) => (Array.isArray(v) ? v.some((x) => (typeof x === 'string' ? x.trim() : x)) : str(v) !== '');
 
 /** A short stable hash, so an acknowledgement stays attached to the exact text it was given for. */
@@ -114,7 +118,22 @@ export function runChecks(cfg = {}, ctx = {}) {
       if (!str(a.title)) block('attachments', `Attachment ${i + 1} has no title`, field);
       if (!CARD_ID.test(String(a.id || '')) || seen.has(a.id)) block('attachments', `“${name}” needs removing and adding again (its card is damaged)`, field);
       seen.add(a.id);
-      if (!a.file) { block('attachments', `“${name}” has no file. Attach a PDF, or list it as available on request.`, field); return; }
+      if (a.evidence) {
+        // A library document (Phase 8): judged once the library is known, never on a guess.
+        if (!ctx.evidence) return;
+        const e = ctx.evidence[a.evidence];
+        if (!e) { block('attachments', `“${name}”: its library document is no longer in the library. Choose another, or attach a PDF.`, field); return; }
+        if (e.retired) { block('attachments', `“${name}”: “${e.title}” was retired from the library. Choose another, or remove it.`, field); return; }
+        if (!e.current || !RELEASED_FILE.has(e.current.status)) { block('attachments', `“${name}”: “${e.title}” has no approved file in the library yet.`, field); return; }
+        const exp = e.current.expiresOn;
+        if (exp && DATE.test(exp) && ctx.today && exp < ctx.today) { block('attachments', `“${name}”: “${e.title}” expired on ${dayAu(exp)}. Approve the renewed one in Documents, or remove it.`, field); return; }
+        const until = str(cfg.meta?.validUntil);
+        if (exp && DATE.test(exp) && DATE.test(until) && exp < until) {
+          needAck(`expiring:${a.evidence}:${exp}:${until}`, 'attachments', `“${e.title}” expires on ${dayAu(exp)}, before this proposal's valid-until date (${dayAu(until)}). The client could be holding an expired copy while they decide.`, e.title);
+        }
+        return;
+      }
+      if (!a.file) { block('attachments', `“${name}” has no file. Attach a PDF, choose one from the library, or list it as available on request.`, field); return; }
       if (!ctx.files) return;
       const f = ctx.files[a.file];
       if (!f) block('attachments', `“${name}”: its file is no longer on this proposal. Attach it again.`, field);
@@ -201,7 +220,8 @@ export function runChecks(cfg = {}, ctx = {}) {
   if (visible.has('docs') && cfg.docs?.workflow?.on === true) warn('docs', `The workflow diagram is on, but ${B} has not approved that document yet (C21).`);
   if (visible.has('logistics')) warn('logistics', `The logistics lines still need ${B} sign-off as proposal wording (C20).`);
   if (!present(cfg.terms?.body)) warn('terms', 'No terms and conditions are attached; the acceptance wording leaves them out (Q7).');
-  if (visible.has('attachments') && ctx.files && (cfg.attachments || []).some((a) => a && a.visibility === 'client' && ctx.files[a.file]?.status === 'override')) {
+  if (visible.has('attachments') && (cfg.attachments || []).some((a) => a && a.visibility === 'client'
+    && (a.evidence ? ctx.evidence?.[a.evidence]?.current?.status === 'override' : ctx.files?.[a.file]?.status === 'override'))) {
     warn('attachments', 'A file the check did not pass has been released by an administrator. It goes to the client as it is.');
   }
   if (cfg.demo === true) warn('cover', 'This is the demo proposal (fictional client and site).');

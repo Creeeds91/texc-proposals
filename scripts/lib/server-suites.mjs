@@ -768,6 +768,61 @@ export async function suiteEditor() {
   await page.keyboard.press('Escape');
   await page.waitForFunction(() => !document.querySelector('dialog.viewer'), null, { timeout: 5000 });
 
+  // The library (Phase 8): a card offers a standing document, as publishing will send it.
+  const libTitle = `Public liability certificate of currency ${randomBytes(2).toString('hex')}`;
+  const soon = await page.evaluate(() => new Date(Date.now() + 20 * 86400000).toISOString().slice(0, 10));
+  const later = await page.evaluate(() => new Date(Date.now() + 60 * 86400000).toISOString().slice(0, 10));
+  const libId = await page.evaluate(async ([title, bytes, expiresOn]) => {
+    const post = async (b) => (await fetch('/api/library', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) })).json();
+    const { item } = await post({ action: 'create', ownerKind: 'organisation', kind: 'insurance', title, issuer: 'Example Mutual Insurance', currency: 'expires' });
+    const buf = new Uint8Array(bytes);
+    const sha = [...new Uint8Array(await crypto.subtle.digest('SHA-256', buf))].map((x) => x.toString(16).padStart(2, '0')).join('');
+    const begin = await post({ action: 'begin', id: item.id, name: 'certificate-of-currency.pdf', bytes: buf.length, sha256: sha });
+    await fetch(begin.uploadUrl, { method: 'PUT', headers: { 'Content-Type': 'application/pdf' }, body: buf });
+    const v = await post({ action: 'verify', id: item.id, name: 'certificate-of-currency.pdf', sha256: sha });
+    await post({ action: 'approve', id: item.id, version: v.item.versions[0].id, docRev: '2026', expiresOn });
+    return item.id;
+  }, [libTitle, [...testPdf('Certificate of currency')], soon]);
+  await page.fill('[data-path="meta.validUntil"] input', later);
+  await settle();
+  const nCards = (await cfg()).attachments.length;
+  await page.click('.ed-panel[data-sec="attachments"] [data-path="attachments"] > .ed-rows-tools > button >> nth=0');
+  await settle();
+  await page.click(`[data-path="attachments.${nCards}.file"] button:has-text("Choose from the library")`);
+  await page.click(`.ed-libpick-item:has-text("${libTitle}")`);
+  await page.waitForSelector(`[data-path="attachments.${nCards}.evidence"]`, { timeout: 10000 });
+  const card = (await cfg()).attachments[nCards];
+  expect(card.evidence === libId && !card.file && card.title === libTitle && card.category === 'certificates', `choosing from the library did not make a library card: ${JSON.stringify(card)}`);
+  expect(/From the library/.test(await page.textContent(`[data-path="attachments.${nCards}.evidence"]`)), 'the library card does not say where its file comes from');
+  const acksNow = await page.evaluate(() => window.__editor.state.checks.acks.map((x) => x.key));
+  expect(acksNow.some((k) => k === `expiring:${libId}:${soon}:${later}`), `a certificate expiring before the valid-until date did not ask to be acknowledged: ${acksNow.join(', ')}`);
+  expect(/Current to/.test(await page.textContent('[data-attachments]')), 'the page preview does not show when the library document runs to');
+
+  // Several PDFs at once: a card each, every one checked.
+  const before2 = (await cfg()).attachments.length;
+  await page.setInputFiles('.ed-drop input[type=file]', [
+    { name: 'Blast-management-plan.pdf', mimeType: 'application/pdf', buffer: testPdf('Blast management plan') },
+    { name: 'Vibration_assessment.pdf', mimeType: 'application/pdf', buffer: testPdf('Vibration assessment') }]);
+  await page.waitForFunction((n) => {
+    const list = window.__editor.state.cfg.attachments;
+    return list.length === n + 2 && list.slice(n).every((c) => c.file);
+  }, before2, { timeout: 30000 });
+  const added = (await cfg()).attachments.slice(before2);
+  expect(added.map((c) => c.title).join('|') === 'Blast management plan|Vibration assessment' && added.every((c) => c.visibility === 'client'), `several PDFs did not become a card each: ${JSON.stringify(added.map((c) => c.title))}`);
+  // One PDF dropped on a card attaches to it.
+  await page.click('.ed-panel[data-sec="attachments"] [data-path="attachments"] > .ed-rows-tools > button >> nth=0');
+  await settle();
+  const dropAt = before2 + 2;
+  await page.evaluate(([n, bytes]) => {
+    const dt = new DataTransfer();
+    dt.items.add(new File([new Uint8Array(bytes)], 'Neighbour-notification-plan.pdf', { type: 'application/pdf' }));
+    const box = document.querySelector(`[data-path="attachments.${n}.file"]`);
+    box.dispatchEvent(new DragEvent('dragover', { dataTransfer: dt, bubbles: true, cancelable: true }));
+    box.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true }));
+  }, [dropAt, [...testPdf('Neighbour notification plan')]]);
+  await page.waitForFunction((n) => !!window.__editor.state.cfg.attachments[n].file, dropAt, { timeout: 30000 });
+  expect((await cfg()).attachments[dropAt].title === 'Neighbour notification plan', 'a PDF dropped on a card did not attach to it');
+
   // Checklist to Ready, then the autosave holds across a reload.
   await page.click('#ed-check');
   await page.waitForSelector('dialog .ed-verdict');
@@ -827,6 +882,7 @@ export async function suiteEditor() {
     'typing, show/hide, keyboard reorder, rows with undo, CONFIRM flag and restore',
     'upload resized, stored on the server and previewed; new photo blocks without alt; checklist reaches Ready',
     'documents attached through the panel: a script-carrying PDF refused and replaced by a clean copy, a renamed file refused outright, one that could not be verified released by an administrator with a reason; the preview draws its pages',
+      'a card offers a library document (and the checklist asks about one that lapses before the valid-until date); several PDFs dropped at once become a card each; one dropped on a card attaches to it, and never moves a panel',
     'autosave to the server survives a reload; a colleague\'s save is never silently overwritten; phone layout holds',
   ] };
 }
@@ -1298,6 +1354,186 @@ export async function suiteDashboard() {
  * from the demo, the gate, a proposal unlocked down to its acceptance form,
  * a dead link, sign-in, the dashboard and its history panel, the editor.
  */
+/**
+ * The document library (Phase 8): who may change it, the same check on every
+ * file as on a proposal's, approval as the gate, and publishing that sends a
+ * library document's CURRENT approved file, frozen into the revision, so a
+ * renewal changes the next revision and never the one already sent.
+ */
+export async function suiteLibrary() {
+  const a = await app();
+  if (!a) return skipNoStack();
+  const fails = [];
+  const expect = (cond, what) => { if (!cond) fails.push(what); };
+  const { psql } = await import('./local-supabase.mjs');
+  const q = (sql) => psql(a.sb.conn, sql);
+  const staff = await checkStaff(a);
+  const tag = randomBytes(3).toString('hex');
+  const anon = client(a);
+  const people = {};
+  for (const role of ['admin', 'editor', 'viewer']) {
+    const email = `lib-${role}-${tag}@example.com`;
+    await anon.call('POST', '/api/auth?action=code', { email });
+    await staff.call('POST', '/api/people', { email, status: 'active', role });
+    people[role] = client(a);
+    await people[role].signIn(email);
+  }
+  const { admin, editor, viewer } = people;
+  const lib = (c, body) => c.call('POST', '/api/library', body);
+  const upload = async (c, id, bytes, name) => {
+    const sha = sha256(bytes);
+    const begin = await lib(c, { action: 'begin', id, name, bytes: bytes.length, sha256: sha });
+    if (begin.status !== 200 || !begin.json.uploadUrl) return begin;
+    const put = await fetch(begin.json.uploadUrl, { method: 'PUT', headers: { 'content-type': 'application/pdf', 'x-upsert': 'false' }, body: bytes });
+    if (!put.ok) return { status: put.status, json: { error: await put.text() } };
+    return lib(c, { action: 'verify', id, name, sha256: sha });
+  };
+  const audited = (action, target) => q(`select count(*) from public.texc_staff_audit where action = '${action}' and target = '${target}'`) !== '0';
+
+  // 1. Who may do what.
+  const page = await viewer.call('GET', '/documents');
+  const csp = page.headers.get('content-security-policy') || '';
+  expect(page.status === 200 && /<title>Documents/.test(page.text) && /script-src 'self'/.test(csp) && !/unsafe-inline/.test(csp), `a viewer opening the Documents page: ${page.status}`);
+  const stranger = await anon.call('GET', '/documents');
+  expect(stranger.status === 302 && stranger.headers.get('location') === '/signin?next=%2Fdocuments', `/documents without a session: ${stranger.status} ${stranger.headers.get('location')}`);
+  expect((await anon.call('POST', '/api/library', { action: 'list' })).status === 401, 'the library answered without a session');
+  expect((await lib(viewer, { action: 'list' })).status === 200, 'a viewer could not see the library');
+  const facts = { action: 'create', ownerKind: 'organisation', kind: 'insurance', title: 'Public liability certificate of currency', issuer: 'Example Mutual Insurance', number: 'PL-000123', currency: 'expires' };
+  for (const [who, c] of [['a viewer', viewer], ['an editor', editor]]) {
+    const r = await lib(c, facts);
+    expect(r.status === 403, `${who} added to the library: ${r.status}`);
+  }
+  const foreign = await admin.call('POST', '/api/library', facts, { origin: 'https://evil.example', 'sec-fetch-site': 'cross-site' });
+  expect(foreign.status === 403, `a cross-site request changed the library: ${foreign.status}`);
+  expect((await lib(admin, { ...facts, title: '' })).status === 400, 'a document with no title was added');
+  expect((await lib(admin, { ...facts, ownerKind: 'person', ownerRef: 'someone-not-on-the-team' })).status === 400, 'a document was given to someone not on the team');
+  const created = await lib(admin, facts);
+  const id = created.json && created.json.item && created.json.item.id;
+  expect(created.status === 200 && id && audited('library_document_added', id), `an administrator adding a document: ${created.status} ${created.text}`);
+  if (!id) return { status: FAIL, detail: fails };
+
+  // 2. The same check as a proposal's files.
+  const script = await upload(admin, id, PDF_FIXTURES['/JavaScript inside a compressed object stream'].bytes(), 'certificate-with-a-script.pdf');
+  const refused = script.json && script.json.item && script.json.item.versions.find((v) => v.status === 'rejected');
+  expect(refused && refused.overridable && /JavaScript/.test(refused.reasons.join(' ')), `a library file with a script was not refused with its reason: ${script.status}`);
+  const notPdf = await upload(admin, id, PDF_FIXTURES['not a PDF (a renamed file)'].bytes(), 'renamed.pdf');
+  const keptNotPdf = q(`select count(*) from public.texc_evidence_versions where evidence_id = '${id}' and original_name = 'renamed.pdf'`);
+  expect(notPdf.status === 422 && keptNotPdf === '0', `a file that is not a PDF was kept in the library: ${notPdf.status}, rows ${keptNotPdf}`);
+  const early = await lib(admin, { action: 'approve', id, version: refused && refused.id, expiresOn: '2099-01-01' });
+  expect(early.status === 409, `a refused file was approved: ${early.status}`);
+  const shortReason = await lib(admin, { action: 'override', id, version: refused && refused.id, reason: 'fine' });
+  expect(shortReason.status === 400, 'a release with no real reason was accepted');
+  const byEditor = await lib(editor, { action: 'override', id, version: refused && refused.id, reason: 'Flattened copy is not available from the insurer.' });
+  expect(byEditor.status === 403, `an editor released a library file: ${byEditor.status}`);
+  const released = await lib(admin, { action: 'override', id, version: refused && refused.id, reason: 'The insurer issues it only in this form; checked by hand.' });
+  expect(released.status === 200 && audited('library_file_released', refused && refused.id), `an administrator's release, audited: ${released.status}`);
+  const discard = await lib(admin, { action: 'discard', id, version: refused && refused.id });
+  expect(discard.status === 200 && !discard.json.item.versions.some((v) => v.id === (refused && refused.id)), `discarding a file never approved: ${discard.status}`);
+
+  const first = await upload(admin, id, testPdf('Certificate of currency 2026'), 'certificate-of-currency-2026.pdf');
+  const v1 = first.json && first.json.item && first.json.item.versions.find((v) => v.name === 'certificate-of-currency-2026.pdf');
+  const path1 = v1 && q(`select storage_path from public.texc_evidence_versions where id = '${v1.id}'`);
+  expect(v1 && v1.status === 'clean' && new RegExp(`^library/${id}/[a-f0-9]{64}-certificate-of-currency-2026\\.pdf$`).test(path1), `a clean file goes up under the library, named by its whole fingerprint: ${path1}`);
+
+  // 3. Approval is the gate, and needs its facts.
+  const today = q("select to_char(now() at time zone 'Australia/Hobart', 'YYYY-MM-DD')");
+  const noExpiry = await lib(admin, { action: 'approve', id, version: v1.id, docRev: '2026' });
+  const lapsed = await lib(admin, { action: 'approve', id, version: v1.id, docRev: '2026', expiresOn: '2020-06-30' });
+  expect(noExpiry.status === 400 && lapsed.status === 400, `a certificate approved with no expiry or one already past: ${noExpiry.status}, ${lapsed.status}`);
+  const byEditor2 = await lib(editor, { action: 'approve', id, version: v1.id, docRev: '2026', expiresOn: '2099-06-30' });
+  expect(byEditor2.status === 403, `an editor approved a library file: ${byEditor2.status}`);
+  const expires1 = q("select to_char((now() at time zone 'Australia/Hobart')::date + 400, 'YYYY-MM-DD')");
+  const ok1 = await lib(admin, { action: 'approve', id, version: v1.id, docRev: '2026', issuedOn: today, expiresOn: expires1 });
+  expect(ok1.status === 200 && ok1.json.item.current && ok1.json.item.current.id === v1.id && audited('library_file_approved', v1.id), `approving the checked file: ${ok1.status} ${ok1.text.slice(0, 200)}`);
+  const again = await lib(admin, { action: 'approve', id, version: v1.id, docRev: 'changed', expiresOn: '2099-01-01' });
+  const dropApproved = await lib(admin, { action: 'discard', id, version: v1.id });
+  expect(again.status === 409 && dropApproved.status === 409, `an approved file was changed or discarded: ${again.status}, ${dropApproved.status}`);
+  const viewerLink = await lib(viewer, { action: 'url', id, version: v1.id });
+  const bytes1 = viewerLink.status === 200 ? new Uint8Array(await (await fetch(viewerLink.json.url)).arrayBuffer()) : null;
+  expect(bytes1 && sha256(bytes1) === v1.sha256, `a viewer previewing a library file: ${viewerLink.status}`);
+
+  // 4. A proposal offers it: publishing sends the current approved file, frozen.
+  const p = await demoProposal(admin, { publish: false });
+  const { checkContext } = await import('../../lib/proposals.js');
+  const { evidenceFromList } = await import('../../assets/js/library-view.js');
+  const offer = async (mutate) => {
+    const dr = await admin.call('GET', `/api/drafts?id=${p.id}`);
+    const cfg = dr.json.config;
+    mutate(cfg);
+    const list = (await lib(admin, { action: 'list' })).json.items;
+    const acks = runChecks(cfg, { ...checkContext(), evidence: evidenceFromList(list) }).acks.map((x) => x.key);
+    const put = await admin.call('PUT', '/api/drafts', { id: p.id, version: dr.json.version, config: { ...cfg, acks: [...new Set([...(cfg.acks || []), ...acks])] } });
+    return put.json && put.json.version;
+  };
+  let version = await offer((cfg) => cfg.attachments.push({ id: 'coc', title: 'Certificate of currency', category: 'certificates', visibility: 'client', evidence: id, docRev: 'typed on the card' }));
+  const pubA = await admin.call('POST', '/api/proposals', { action: 'publish', id: p.id, version });
+  expect(pubA.status === 200, `publishing a proposal that offers a library document: ${pubA.status} ${pubA.text.slice(0, 300)}`);
+  const snap = (label) => JSON.parse(q(`select attachments_snapshot::text from public.texc_proposal_revisions where proposal_id = '${p.id}' and rev_label = '${label}'`)).find((x) => x.card === 'coc');
+  const cardOf = (label) => JSON.parse(q(`select published_text from public.texc_proposal_revisions where proposal_id = '${p.id}' and rev_label = '${label}'`)).attachments.find((x) => x.id === 'coc');
+  const sA = snap('A');
+  const cA = cardOf('A');
+  expect(sA && sA.evidence === id && sA.version === v1.id && sA.path === path1 && sA.sha256 === v1.sha256 && sA.expiresOn === expires1,
+    `revision A's snapshot does not hold the library's current file: ${JSON.stringify(sA)}`);
+  expect(cA && cA.docRev === '2026' && cA.expiresOn === expires1 && !('evidence' in cA) && !('file' in cA),
+    `the client's card does not carry the library's facts (or carries an id): ${JSON.stringify(cA)}`);
+  const u = new URL(pubA.json.url);
+  const slug = u.pathname.split('/')[2];
+  const t = u.searchParams.get('t');
+  const vtA = JSON.parse(q(`select published_text from public.texc_proposal_revisions where proposal_id = '${p.id}' and rev_label = 'A'`)).__vt;
+  const openA = await anon.call('POST', '/api/attachment', { slug, t, vt: vtA, id: 'coc' });
+  const servedA = openA.status === 200 ? sha256(new Uint8Array(await (await fetch(openA.json.url)).arrayBuffer())) : null;
+  expect(servedA === v1.sha256, `the client opening the library document: ${openA.status}`);
+
+  // 5. A renewal: approved in the library, sent by the NEXT revision; A keeps its own.
+  const second = await upload(admin, id, testPdf('Certificate of currency 2027'), 'certificate-of-currency-2027.pdf');
+  const v2 = second.json && second.json.item && second.json.item.versions.find((v) => v.name === 'certificate-of-currency-2027.pdf');
+  const expires2 = q("select to_char((now() at time zone 'Australia/Hobart')::date + 760, 'YYYY-MM-DD')");
+  const ok2 = await lib(admin, { action: 'approve', id, version: v2 && v2.id, docRev: '2027', issuedOn: today, expiresOn: expires2 });
+  expect(ok2.status === 200 && ok2.json.item.current.id === (v2 && v2.id) && ok2.json.item.versions.some((v) => v.id === v1.id && v.approvedAt), `approving the renewal: ${ok2.status}`);
+  version = await offer(() => {});
+  const pubB = await admin.call('POST', '/api/proposals', { action: 'publish', id: p.id, version, changeNote: 'Renewed certificate of currency' });
+  const sB = snap('B');
+  expect(pubB.status === 200 && sB && sB.version === (v2 && v2.id) && cardOf('B').docRev === '2027', `revision B does not send the renewal: ${pubB.status} ${JSON.stringify(sB)}`);
+  const stillA = await anon.call('POST', '/api/attachment', { slug, t, vt: vtA, rev: 'A', id: 'coc' });
+  const servedStillA = stillA.status === 200 ? sha256(new Uint8Array(await (await fetch(stillA.json.url)).arrayBuffer())) : null;
+  expect(snap('A').version === v1.id && servedStillA === v1.sha256, `revision A changed when the renewal was approved: ${stillA.status}`);
+  const usage = (await lib(admin, { action: 'list' })).json.items.find((i) => i.id === id).usage;
+  expect(usage.revisions === 2 && usage.proposals === 1 && usage.drafts === 1, `the library does not count where it was sent: ${JSON.stringify(usage)}`);
+
+  // 6. Retired, or lapsed: the next publish is refused, by the checklist and the server alike.
+  const retired = await lib(admin, { action: 'retire', id });
+  expect(retired.status === 200 && audited('library_document_retired', id), `retiring: ${retired.status}`);
+  const pubRetired = await admin.call('POST', '/api/proposals', { action: 'publish', id: p.id, version });
+  expect(pubRetired.status === 422 && /retired/.test(pubRetired.text), `a proposal offering a retired document was published: ${pubRetired.status} ${pubRetired.text.slice(0, 200)}`);
+  const removeUsed = await lib(admin, { action: 'remove', id });
+  expect(removeUsed.status === 409, `a document with approved files was removed: ${removeUsed.status}`);
+  await lib(admin, { action: 'restore', id });
+  // The database refuses to change an approved file, so time is moved instead: the renewal "was approved" long ago and has lapsed.
+  q(`begin; alter table public.texc_evidence_versions disable trigger texc_evidence_versions_guard; update public.texc_evidence_versions set expires_on = (now() at time zone 'Australia/Hobart')::date - 1 where id = '${v2.id}'; alter table public.texc_evidence_versions enable trigger texc_evidence_versions_guard; commit;`);
+  const pubLapsed = await admin.call('POST', '/api/proposals', { action: 'publish', id: p.id, version });
+  expect(pubLapsed.status === 422 && /expired/.test(pubLapsed.text), `a proposal offering a lapsed certificate was published: ${pubLapsed.status} ${pubLapsed.text.slice(0, 200)}`);
+
+  // 7. Deleting a proposal for good leaves the library alone, files and all.
+  q(`update public.texc_proposals set archived_at = now() - interval '120 days' where id = '${p.id}'`);
+  const ref = q(`select reference from public.texc_proposals where id = '${p.id}'`);
+  const purged = await staff.call('POST', '/api/proposals', { action: 'purge', id: p.id, confirm: ref });
+  const libFiles = q(`select count(*) from public.texc_evidence_versions where evidence_id = '${id}' and approved_at is not null`);
+  const stillServes = await lib(admin, { action: 'url', id, version: v1.id });
+  const v1Bytes = stillServes.status === 200 ? sha256(new Uint8Array(await (await fetch(stillServes.json.url)).arrayBuffer())) : null;
+  expect(purged.status === 200 && libFiles === '2' && v1Bytes === v1.sha256, `purging a proposal touched the library: ${purged.status} ${purged.text.slice(0, 120)}, approved files ${libFiles}, v1 ${v1Bytes ? 'kept' : 'gone'}`);
+
+  return fails.length
+    ? { status: FAIL, detail: fails }
+    : { status: PASS, detail: [
+      'only an administrator changes the library; every staff role can see and preview it; strangers and cross-site requests are refused',
+      'a library file gets the same check as a proposal\'s (a script is refused with its reason, a non-PDF is never kept), and a release is audited',
+      'approval is the gate: a checked file, its facts, an expiry that has not passed; an approved file never changes',
+      'publishing sends the current approved file, frozen into the revision with the library\'s facts; the client opens it',
+      'a renewal approved in the library goes out with the next revision; the earlier revision still opens its own',
+      'a retired or lapsed document stops the next publish; deleting a proposal for good leaves the library and its files alone',
+    ] };
+}
+
 /**
  * The deploy check (scripts/deploy-check.mjs) is what a person runs against a
  * preview before anyone relies on it. Here it runs against the local app,

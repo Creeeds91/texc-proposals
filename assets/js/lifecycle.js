@@ -97,7 +97,7 @@ export const isOpen = (state) => ['issued', 'opened', 'engaged', 'changes'].incl
 
 /* ------------------------------------------------------------------ follow-ups */
 
-export const FOLLOW_UP = Object.freeze({ unopenedDays: 5, quietDays: 3, expiringDays: 7 });
+export const FOLLOW_UP = Object.freeze({ unopenedDays: 5, quietDays: 3, expiringDays: 7, documentDays: 14 });
 
 /**
  * Why a proposal needs a person to pick up the phone, most pressing first.
@@ -114,6 +114,13 @@ export function followUps(r, now) {
   if (YMD_RE.test(String(r.valid_until || ''))) {
     const left = daysBetween(today, r.valid_until);
     if (left >= 0 && left <= FOLLOW_UP.expiringDays) out.push({ kind: 'expiring', text: left === 0 ? 'Valid until today' : `Valid for ${left} more ${left === 1 ? 'day' : 'days'}` });
+  }
+  // A document the current revision sent lapses (Phase 8): the client may be deciding on an expired certificate.
+  if (YMD_RE.test(String(r.docs_expire_on || ''))) {
+    const left = daysBetween(today, r.docs_expire_on);
+    if (left <= FOLLOW_UP.documentDays) {
+      out.push({ kind: 'document', text: left < 0 ? `A document it sent expired on ${dayLabel(r.docs_expire_on)}` : left === 0 ? 'A document it sent expires today' : `A document it sent expires in ${left} ${left === 1 ? 'day' : 'days'}` });
+    }
   }
   if (!(r.views_current > 0) && r.rev_published_at) {
     const n = daysSince(r.rev_published_at, now);
@@ -258,7 +265,7 @@ export function listRows(rows, f, now) {
 
 /** Every proposal that needs following up, most pressing reason first. */
 export function followUpList(rows, now) {
-  const rank = { changes: 0, reaccept: 1, expiring: 2, unopened: 3, quiet: 4 };
+  const rank = { changes: 0, reaccept: 1, expiring: 2, document: 3, unopened: 4, quiet: 5 };
   return rows
     .filter((r) => !r.archived_at)
     .map((r) => ({ ...r, state: stateOf(r, now), followUps: followUps(r, now) }))
