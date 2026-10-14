@@ -431,7 +431,9 @@ async function openDetail(id) {
       (p.revisions || []).length ? [h('h3', { class: 'db-h4', text: 'Revisions' }), h('ol', { class: 'db-revs' }, [...p.revisions].reverse().map((x) => h('li', {},
         h('b', { text: `Rev ${x.label}` }),
         h('span', { text: ` ${dayLabel(x.publishedAt)} · ${x.publishedBy}${x.current ? ' · current' : x.withdrawn ? ' · withdrawn' : x.superseded ? ' · superseded' : ''}` }),
-        x.note ? h('span', { class: 'db-rev-note', text: ` — ${x.note}` }) : null)))] : null,
+        x.note ? h('span', { class: 'db-rev-note', text: ` — ${x.note}` }) : null,
+        x.id ? h('a', { class: 'db-textbtn db-rev-open', href: `/staff/revision/${x.id}`, target: '_blank', rel: 'noopener' }, 'Open as sent') : null))),
+      h('p', { class: 'db-note' }, h('a', { class: 'db-textbtn', href: `/archive?proposal=${encodeURIComponent(p.id)}` }, icon('archive'), h('span', { text: 'In the archive, with its record pack' })))] : null,
       h('h3', { class: 'db-h4', text: 'History' }),
       items.length ? timeline : h('p', { class: 'db-note', text: 'Nothing has happened yet.' })));
 }

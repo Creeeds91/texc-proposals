@@ -27,6 +27,7 @@ const D = document;
 const enc = new TextEncoder();
 const hobart = new Intl.DateTimeFormat('en-AU', { timeZone: 'Australia/Hobart', day: 'numeric', month: 'long', year: 'numeric', hour: 'numeric', minute: '2-digit', second: '2-digit', timeZoneName: 'short' });
 const when = (iso) => (iso ? hobart.format(new Date(iso)) : '');
+const dayOf = (ymd) => (/^\d{4}-\d{2}-\d{2}$/.test(String(ymd || '')) ? new Intl.DateTimeFormat('en-AU', { timeZone: 'UTC', day: 'numeric', month: 'long', year: 'numeric' }).format(new Date(`${ymd}T00:00:00Z`)) : '');
 const esc = (v) => String(v == null ? '' : v).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const slugOf = (s, max = 60) => String(s || '').normalize('NFKD').replace(/[^\w.-]+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0, max) || 'file';
 const fmtBytes = (n) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
@@ -190,7 +191,7 @@ function coverHtml(m) {
   const rowsRev = m.revisions.map((r) => `<tr><td><strong>${esc(r.rev)}</strong></td><td>${esc(when(r.publishedAt))}<br><span class="m">${esc(r.publishedBy || '')}</span></td>
     <td>${r.withdrawnAt ? `Withdrawn ${esc(when(r.withdrawnAt))}` : r.supersededAt ? `Superseded ${esc(when(r.supersededAt))}` : 'Current when packed'}${r.note ? `<br><span class="m">${esc(r.note)}</span>` : ''}</td>
     <td><a href="${esc(r.readable || '')}">${r.readable ? 'Read it' : 'not drawn'}</a> · <a href="${esc(r.published)}">published.json</a><br>${ok(r.check)}</td>
-    <td>${r.documents.length ? r.documents.map((d) => `<a href="${esc(d.file || '')}">${esc(d.title || d.name)}</a> ${ok(d.check)}`).join('<br>') : '<span class="m">none</span>'}</td></tr>`).join('');
+    <td>${r.documents.length ? r.documents.map((d) => `<a href="${esc(d.file || '')}">${esc(d.title || d.name)}</a>${d.docRev ? ` <span class="m">Rev ${esc(d.docRev)}</span>` : ''} ${ok(d.check)}`).join('<br>') : '<span class="m">none</span>'}</td></tr>`).join('');
   const rowsAcc = m.acceptances.length ? m.acceptances.map((a) => `<tr><td><strong>${esc(a.rev)}</strong></td><td>${esc(when(a.accepted_at))}</td>
     <td>${esc([a.name, a.position, a.company].filter(Boolean).join(', '))}${a.kind === 'staff' ? `<br><span class="m">Recorded by staff (${esc(a.recorded_by || '')}): ${esc(a.staff_note || '')}</span>` : ''}</td>
     <td>${esc(money(a.accepted_total_cents))}</td><td><a href="${esc(a.file || '')}">Acceptance record</a><br>${ok(a.check)}</td></tr>`).join('')
@@ -230,7 +231,7 @@ ${bad.length ? `<ul>${bad.map((c) => `<li class="bad">${esc(c.path || c.what)}: 
 <dt>Services</dt><dd>${esc((p.services || []).map((s) => m.services[s] || s).join(', '))}</dd>
 <dt>Created</dt><dd>${esc(when(p.created_at))}${p.created_by ? ` by ${esc(p.created_by)}` : ''}</dd>
 <dt>First issued</dt><dd>${esc(when(p.issued_at)) || '—'}</dd>
-<dt>Valid until</dt><dd>${esc(p.valid_until || '—')}</dd>
+<dt>Valid until</dt><dd>${esc(dayOf(p.valid_until) || '—')}</dd>
 <dt>Accepted</dt><dd>${esc(when(p.accepted_at)) || 'No'}</dd>
 <dt>Archived</dt><dd>${p.archived_at ? `${esc(when(p.archived_at))}${p.archived_by ? ` by ${esc(p.archived_by)}` : ''}${p.archive_reason ? `: ${esc(p.archive_reason)}` : ''}` : 'No'}</dd>
 <dt>Keeping periods</dt><dd>${esc(keepLine)}</dd>
@@ -298,6 +299,10 @@ export async function buildPack({ proposalId, api, step = () => {}, brand = '', 
     tick(`Revision ${rev.rev}: published text checked`);
     const docFiles = new Map();
     const documents = [];
+    // Each document's revision, as the client was shown it (the snapshot holds the file; the text holds its facts).
+    let shown = [];
+    try { shown = JSON.parse(rev.published).attachments || []; } catch { shown = []; }
+    const factsOf = (card) => shown.find((x) => x && x.id === card) || {};
     for (const doc of rev.documents) {
       let file = docByHash.get(doc.sha256);
       let c;
@@ -318,7 +323,7 @@ export async function buildPack({ proposalId, api, step = () => {}, brand = '', 
         }
       }
       if (file) docFiles.set(doc.card, file);
-      documents.push({ ...doc, file, check: c });
+      documents.push({ ...doc, docRev: factsOf(doc.card).docRev || '', file, check: c });
       tick(`Revision ${rev.rev}: ${doc.title || doc.name}`);
     }
     let readable = null;

@@ -22,6 +22,9 @@ change it in the same commit as anything it describes.
 | Search words | `texc_proposals.search_extra` (document type, service names, the contact's name, document titles) and the generated `search` column | The server only; staff see the results |
 | The dashboard's data | Read live through `texc_overview()`: per proposal, its listing, dates, value, counts of opens, sessions, documents opened and items ticked, acceptance facts and the contact's name. No link token, passphrase or proposal content | Staff, any role; the client link only to editors and above |
 | CSV exports | Not stored: built on request from the same data and downloaded. Each export is written to `texc_staff_audit` (who, filters, row count) before the file is sent | Editors and above. A downloaded copy is outside this system's control |
+| The archive (Phase 9) | Read live through `texc_archive()`: each revision's facts, its documents as the client saw them with their fingerprints, and its acceptance. No link token, passphrase or storage path | Staff, any role; a sent revision opens for staff from its own published text (less the view token), its photographs by one-hour links and its documents by 60-second links |
+| Record packs | Not stored: assembled in the staff member's browser and downloaded. The request is written to `texc_staff_audit` (who, which proposal) before anything is sent. A pack holds each revision's published text (which carries that revision's view token: on its own it opens nothing, as every client request needs the link token first, which is never in a pack), every document sent, each acceptance record with its signature, the names and emails typed at acceptance, the requests for changes, every event and open (device family and region, never an address) and the staff audit for that proposal | Editors and above. A downloaded pack is outside this system's control: keep it as the record it is |
+| Keeping periods | `texc_settings` key `retention`; each change, with what it was, in `texc_staff_audit` | Every staff role sees them; administrators change them |
 | Who on the staff side did something sensitive | `texc_staff_audit`, append-only. Also the note of every proposal deleted for good: its reference, project, client, dates and archive reason, and who deleted it | The server; Brand in Black |
 
 The database has row-level security on every table and no policies, so the
@@ -36,14 +39,20 @@ A document's bytes are not encrypted with the proposal's passphrase: they sit
 in the private bucket like the photographs, and only a short-lived signed link
 reaches them. Whoever holds such a link in its 60 seconds can fetch the file.
 
-Deleting for good (Phase 7): Brand in Black can delete an archived proposal
-90 days after it was archived, unless it was ever accepted. Every row of it
+Deleting for good (Phase 7, Phase 9): Brand in Black can delete an archived
+proposal 90 days after it was archived; one that was ever accepted only once
+its keeping period has passed since its last acceptance (and never while no
+period is set). Every row of it
 (drafts, revisions, keys, events, views, document records) and every stored
 photograph, document and record under its folder goes; the staff audit keeps
 the note above. Nothing else in the system deletes anything.
 
+Automatic archiving (Phase 9): once TEXC sets a period, a daily run archives
+a proposal that expired without acceptance and has not changed for that long.
+It never deletes.
+
 Still to settle: the privacy notice for proposals (C31) — needed before the
-first live acceptance — and how long drafts, views, events, attached files,
-acceptances and their records are kept. An acceptance is a business record;
-expect it to be kept at least as long as TEXC keeps contracts, which is why
-an accepted proposal can never be deleted here.
+first live acceptance — and the keeping periods themselves (C43). Until TEXC
+sets them nothing is archived automatically and an accepted proposal can
+never be deleted here: an acceptance is a business record, kept at least as
+long as TEXC keeps contracts.

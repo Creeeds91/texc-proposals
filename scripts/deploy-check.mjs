@@ -22,15 +22,17 @@
  * be reached; 3 nothing wrong, but something NOT CHECKED.
  */
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { resolve, dirname, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CLIENT_CSP, EDITOR_CSP, WORKER_CSP } from '../lib/csp.js';
+import { CLIENT_CSP, EDITOR_CSP, WORKER_CSP, ARCHIVE_CSP, REVISION_CSP } from '../lib/csp.js';
 import { SESSION_COOKIE } from '../lib/accounts.js';
 import { SIGNIN_HTML } from '../lib/signin-html.js';
 import { DASHBOARD_HTML } from '../lib/dashboard-html.js';
 import { LIBRARY_HTML } from '../lib/library-html.js';
 import { EDITOR_HTML } from '../lib/editor-html.js';
+import { ARCHIVE_HTML } from '../lib/archive-html.js';
+import { REVISION_HTML } from '../lib/revision-html.js';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const sha = (b) => createHash('sha256').update(b).digest('hex');
@@ -43,7 +45,7 @@ const shape = (p) => String(p || '').replace(STORAGE, '<storage>');
 
 /** Never a URL: the editor and its library, the website snapshot, the schema, the source. */
 const PRIVATE = [
-  '/lib/editor-html.js', '/lib/template-data.js', '/lib/brand.js', '/lib/vault.js',
+  '/lib/editor-html.js', '/lib/revision-html.js', '/lib/template-data.js', '/lib/brand.js', '/lib/vault.js',
   '/content/library.seed.json', '/content/texc-snapshot.json', '/content/locked-lines.json',
   '/templates/proposal.html', '/fixtures/demo-proposal-revB.json', '/supabase/schema.sql',
   '/scripts/build.mjs', '/docs/architecture.md', '/package.json', '/vercel.json',
@@ -61,6 +63,8 @@ export async function runDeployCheck({ url, production = false, bypass = '', ses
   const vercel = JSON.parse(local('vercel.json'));
   const shared = Object.fromEntries((vercel.headers.find((h) => h.source === '/(.*)') || { headers: [] }).headers.map((h) => [h.key.toLowerCase(), h.value]));
   const seenStorage = new Set();
+  // A revision address that names no revision: its page is the same for any id, and nothing is read for it.
+  const probeId = randomUUID();
 
   const get = async (path, { cookie = '', manual = false } = {}) => {
     // Vercel can inject its toolbar into a preview's pages; this asks it not
@@ -71,11 +75,13 @@ export async function runDeployCheck({ url, production = false, bypass = '', ses
     const r = await fetchImpl(base + path, { headers, redirect: manual ? 'manual' : 'follow' });
     return { status: r.status, h: (k) => r.headers.get(k), body: Buffer.from(await r.arrayBuffer()) };
   };
-  // Every page and file carries the shared headers, exactly as vercel.json sends them.
-  const sharedHeaders = (label, r) => {
+  // Every page and file carries the shared headers, exactly as vercel.json
+  // sends them, and may not be framed — except a sent revision, which only
+  // this origin may frame (the record pack draws it on the Archive page).
+  const sharedHeaders = (label, r, { frame = 'DENY' } = {}) => {
     // A preview may also get Vercel's own noindex, so that one need only say both words.
     const ok = (k, v) => (k === 'x-robots-tag' ? /noindex/.test(r.h(k) || '') && /nofollow/.test(r.h(k) || '') : r.h(k) === v);
-    const bad = Object.entries(shared).filter(([k, v]) => !ok(k, v)).map(([k, v]) => `${k} is ${r.h(k) === null ? 'missing' : `"${r.h(k)}"`}, not "${v}"`);
+    const bad = Object.entries({ ...shared, 'x-frame-options': frame }).filter(([k, v]) => !ok(k, v)).map(([k, v]) => `${k} is ${r.h(k) === null ? 'missing' : `"${r.h(k)}"`}, not "${v}"`);
     if (https && !r.h('strict-transport-security')) bad.push('no Strict-Transport-Security');
     if (bad.length) wrong.push(`${label}: ${bad.join('; ')}`);
   };
@@ -195,11 +201,14 @@ export async function runDeployCheck({ url, production = false, bypass = '', ses
     const before = wrong.length;
     if (signin.status !== 200) wrong.push(`/signin answered ${signin.status}`);
     else { same('the sign-in page', signin, Buffer.from(SIGNIN_HTML)); policy('the sign-in page', signin, CLIENT_CSP); sharedHeaders('the sign-in page', signin); }
-    for (const [path, next] of [['/dashboard', '%2Fdashboard'], ['/documents', '%2Fdocuments'], ['/editor', '%2Feditor']]) {
+    for (const [path, next] of [['/dashboard', '%2Fdashboard'], ['/documents', '%2Fdocuments'], ['/archive', '%2Farchive'], ['/editor', '%2Feditor'], [`/staff/revision/${probeId}`, encodeURIComponent(`/staff/revision/${probeId}`)]]) {
       const r = await get(path, { manual: true });
       if (r.status !== 302 || r.h('location') !== `/signin?next=${next}`) wrong.push(`${path} without a session answered ${r.status} ${r.h('location') || ''}, not a redirect to sign in`);
     }
-    if (wrong.length === before) held.push('the sign-in page is this checkout\'s; the dashboard, the Documents page and the editor send a stranger to it');
+    // The daily retention run answers only Vercel's scheduler, which carries CRON_SECRET.
+    const cron = await get('/api/retention');
+    if (cron.status !== 401) wrong.push(`/api/retention without its secret answered ${cron.status}, not 401`);
+    if (wrong.length === before) held.push('the sign-in page is this checkout\'s; the dashboard, the Documents page, the Archive, a sent revision and the editor send a stranger to it; the retention run refuses anyone without its secret');
   }
 
   // 8. The functions are there and running, and refuse the wrong method before any database work.
@@ -224,16 +233,19 @@ export async function runDeployCheck({ url, production = false, bypass = '', ses
     const dash = await get('/dashboard', { cookie, manual: true });
     const docs = await get('/documents', { cookie, manual: true });
     const ed = await get('/editor', { cookie, manual: true });
-    if (dash.status === 302 || docs.status === 302 || ed.status === 302) notChecked.push('the editor and dashboard: the session given was not accepted (signed out, expired, or not an editor)');
+    const arc = await get('/archive', { cookie, manual: true });
+    const rev = await get(`/staff/revision/${probeId}`, { cookie, manual: true });
+    if ([dash, docs, ed, arc, rev].some((r) => r.status === 302)) notChecked.push('the editor and dashboard: the session given was not accepted (signed out, expired, or not an editor)');
     else {
       const before = wrong.length;
-      for (const [label, r, bytes, expected] of [['the dashboard', dash, DASHBOARD_HTML, CLIENT_CSP], ['the Documents page', docs, LIBRARY_HTML, CLIENT_CSP], ['the editor', ed, EDITOR_HTML, EDITOR_CSP]]) {
+      for (const [label, r, bytes, expected, frame] of [['the dashboard', dash, DASHBOARD_HTML, CLIENT_CSP], ['the Documents page', docs, LIBRARY_HTML, CLIENT_CSP], ['the editor', ed, EDITOR_HTML, EDITOR_CSP],
+        ['the Archive page', arc, ARCHIVE_HTML, ARCHIVE_CSP], ['a sent revision', rev, REVISION_HTML, REVISION_CSP, 'SAMEORIGIN']]) {
         if (r.status !== 200) { wrong.push(`${label} answered ${r.status} with a session`); continue; }
         same(label, r, Buffer.from(bytes));
         policy(label, r, expected);
-        sharedHeaders(label, r);
+        sharedHeaders(label, r, { frame });
       }
-      if (wrong.length === before) held.push('signed in, the dashboard, the Documents page and the editor are this checkout\'s, each under its own policy alone (the editor\'s adds blob: previews)');
+      if (wrong.length === before) held.push('signed in, the dashboard, the Documents page, the Archive, a sent revision and the editor are this checkout\'s, each under its own policy alone (the editor\'s adds blob: previews; the Archive may frame a revision, and only a revision may be framed, by this origin only)');
     }
   } else notChecked.push('the editor and dashboard pages (give STAFF_SESSION, a signed-in session, to check their policies and bytes)');
 

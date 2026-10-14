@@ -137,7 +137,8 @@ added later is appended with `alter table … add column`, never tidied into the
   a caller (`check.mjs conventions`). The secret key goes in the `apikey`
   header only.
 - Endpoints never read `content/` or `templates/` at run time; they import the
-  generated `lib/template-data.js`, `lib/editor-html.js`, `lib/signin-html.js`, `lib/dashboard-html.js`, `lib/library-html.js`.
+  generated `lib/template-data.js`, `lib/editor-html.js`, `lib/signin-html.js`, `lib/dashboard-html.js`, `lib/library-html.js`,
+  `lib/revision-html.js`, `lib/archive-html.js`.
 
 ## Attachments (Phase 4)
 
@@ -224,7 +225,8 @@ added later is appended with `alter table … add column`, never tidied into the
   lighthouse`; after any change to the staff pages, `a11y`.
 - **Every path gets exactly one security policy, from one place**: `vercel.json`
   for static files and plain endpoints, the function itself for a page that
-  sets its own (the editor, the acceptance record). Never let two rules match
+  sets its own (the editor, the acceptance record, the Archive, a sent
+  revision). Never let two rules match
   one path; `check.mjs csp` fails if they do.
 - **A deployment is checked from outside**: `node scripts/deploy-check.mjs
   --url <address>` (GET requests only; `--production` once live). `check.mjs
@@ -252,9 +254,38 @@ added later is appended with `alter table … add column`, never tidied into the
 - After any change here run `check.mjs schema library editor lifecycle a11y`
   and `node scripts/demo/capture.mjs --phase8`, and look at the captures.
 
+## Archive and retention (Phase 9)
+
+`docs/architecture.md` §20 is the design. What must hold:
+
+- **The archive shows what was sent, never what is there now.** A revision
+  opens from its own `published_text` and its documents from its own
+  `attachments_snapshot`; search reads the same. Never fill a gap from the
+  draft, the library or the proposal row.
+- **The staff revision view is the client page**, built from the same
+  template and runtime, booted by `assets/js/archive-view.js`. It records
+  nothing as the client's and offers nothing to accept. A design change that
+  would alter an old revision ships as a new template version, as ever.
+- **Only a sent revision may be framed, and only by this origin**
+  (`REVISION_CSP`, `X-Frame-Options: SAMEORIGIN`); the Archive page alone may
+  frame (`ARCHIVE_CSP`). `check.mjs csp` holds it; never widen either.
+- **A record pack is evidence**: every file fingerprinted and compared with
+  the fingerprint recorded at the time; a mismatch is packed and named, never
+  dropped or hidden. Editors and above, audited before anything is sent;
+  nothing is assembled or kept on the server. The readable copy is a
+  convenience; `published.json` is the record.
+- **Keeping periods are TEXC's** (C43): never set a default. Unset, nothing
+  is archived automatically and no accepted proposal can be deleted. The
+  daily run only archives, as `retention`, through `texc_set_archived`;
+  deletion stays `texc_purge()`, which now also waits out the keeping period.
+- After any change here run `check.mjs schema archive lifecycle csp a11y
+  deploy` and `node scripts/demo/capture.mjs --phase9`, and look at the
+  captures.
+
 ## Generated files
 
 `views/*.html` (404 included), `lib/editor-html.js`, `lib/signin-html.js`, `lib/dashboard-html.js`, `lib/library-html.js`,
+`lib/revision-html.js`, `lib/archive-html.js`,
 `lib/template-data.js` and `lib/demo-fixture.js` are built by
 `node scripts/build.mjs`. Never hand-edit them. `public/` (what Vercel serves)
 is written by `--public` and is git-ignored. The build is deterministic: a

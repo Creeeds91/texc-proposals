@@ -44,6 +44,9 @@ they can see nothing.
 | Record an acceptance received by email or on paper | | | Yes |
 | Approve people; mark a proposal as practice | | | Yes |
 | Add to, approve and retire the document library | | | Yes |
+| Search the archive; open any revision as it was sent | Yes | Yes | Yes |
+| Download a proposal's record pack | | Yes | Yes |
+| Enter the keeping periods, as TEXC directs | | | Yes |
 
 Brand in Black's accounts sit above these, for support. Only Brand in Black
 can delete a proposal permanently (section 12).
@@ -254,11 +257,42 @@ list, and nothing can be changed on it. **Restore** brings all of that back.
 practice or testing so it never counts in the figures.
 
 **Deleting for good** is for Brand in Black only, 90 days after a proposal
-was archived, and never once it was accepted (an acceptance is a business
-record and is kept). It removes every revision, its history, photographs and
-documents. The staff audit keeps a note of what it was and who deleted it.
+was archived. An accepted proposal is a business record: it can be deleted
+only once its keeping period (section 13) has passed since it was accepted,
+and never while no period is set. Deleting removes every revision, its
+history, photographs and documents. The staff audit keeps a note of what it
+was and who deleted it.
 
-## 13. When something goes wrong
+## 13. The archive and record packs
+
+The **Archive** page (in the bar at the top) lists every revision ever sent,
+archived proposals included, newest first. Search by the client, the site, a
+service, the reference, or a document's code or title — a drawing number
+finds the revision that sent that drawing — and narrow it by the year it was
+sent, the service or the region.
+
+- **Open as sent** shows a revision exactly as the client received it, with
+  the documents it sent, even if a later revision changed them. A strip at
+  the top says when it was sent and what has happened since. Nothing you do
+  there reaches the client.
+- **Record pack** (editors and administrators) downloads one proposal's
+  whole record as a zip: every revision as published, a copy of each you can
+  read without this system, every document, the acceptance record with its
+  signature, and every event. Each is checked against the fingerprint taken
+  when it was published or accepted, and the pack says so on its first page.
+  If anything does not match, the pack still downloads and names it: tell
+  Brand in Black. Taking a pack is recorded.
+- **Keeping periods** are TEXC's decision, not the system's. Until they are
+  entered, nothing is archived automatically and no accepted proposal can be
+  deleted. Once an administrator enters them, a proposal that ran out without
+  being accepted is archived automatically after that many days (never
+  deleted), and an accepted one is kept that many years.
+
+![The archive](guide/11-archive.webp)
+
+![A record pack](guide/12-record-pack.webp)
+
+## 14. When something goes wrong
 
 | What happened | What to do |
 |---|---|

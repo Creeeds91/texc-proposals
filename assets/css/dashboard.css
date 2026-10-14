@@ -171,7 +171,7 @@ body.db { background: var(--paper); color: var(--ink); min-height: 100vh; }
 .db-accepts li { display: grid; grid-template-columns: 16px minmax(0, 1fr); gap: var(--space-2); align-items: start; }
 .db-accepts .ic { width: 16px; height: 16px; margin-top: 3px; color: var(--go); }
 .db-accepts .is-stale .ic { color: var(--ink-on-paper-muted); }
-.db-accepts .db-textbtn { min-height: 0; padding: 0; margin-left: var(--space-2); }
+.db-accepts .db-textbtn, .db-revs .db-rev-open { min-height: 0; padding: 0; margin-left: var(--space-2); }
 .db-rev-note { color: var(--ink-on-paper-muted); }
 .db-timeline { display: grid; gap: var(--space-3); }
 .db-timeline > li { display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: var(--space-3); font-size: var(--text-sm); }
@@ -198,8 +198,8 @@ body.db { background: var(--paper); color: var(--ink); min-height: 100vh; }
   .db-top-inner { gap: 0 var(--space-3); padding: var(--space-2) var(--space-4) 0; height: auto; flex-wrap: wrap; }
   .db-brand img { height: 20px; }
   .db-brand span, .db-who span { display: none; }
-  .db-nav { order: 3; flex: 1 1 100%; gap: var(--space-4); }
-  .db-nav a { font-size: 11px; letter-spacing: 0.06em; padding: var(--space-3) 0; }
+  .db-nav { order: 3; flex: 1 1 100%; gap: var(--space-3); justify-content: space-between; }
+  .db-nav a { font-size: 11px; letter-spacing: 0.04em; padding: var(--space-3) 0; white-space: nowrap; }
   .db-head { align-items: flex-start; flex-direction: column; }
   .db-figures .db-section-head .db-control { flex: 1 1 100%; }
   .db-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }

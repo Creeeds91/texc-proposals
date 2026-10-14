@@ -24,6 +24,8 @@
  *                                    (local stack)
  *   demo-out/phase7/*.png            deleting for good (when it can, cannot, and the way in),
  *                                    page not found, the phone's top bar        (local stack)
+ *   demo-out/phase9/*                the Archive: search, a revision as sent, the record pack made,
+ *                                    checked and opened, keeping periods; a scroll video (local stack)
  *
  *   node scripts/demo/capture.mjs              everything
  *   node scripts/demo/capture.mjs --editor     the editor captures only
@@ -32,6 +34,7 @@
  *   node scripts/demo/capture.mjs --phase5     the Phase 5 captures only
  *   node scripts/demo/capture.mjs --phase6     the Phase 6 captures only
  *   node scripts/demo/capture.mjs --phase7     the Phase 7 captures only
+ *   node scripts/demo/capture.mjs --phase9     the Phase 9 captures only
  *
  * Section stills hide the fixed furniture (top bar, rail, back-to-top) so a
  * sticky bar is never stitched into the middle of a section; the arrival shots
@@ -1101,6 +1104,202 @@ async function phase8Stills() {
   return readdirSync(dir).length;
 }
 
+/**
+ * Phase 9, staff side: a proposal sent twice (Rev B carries the client's
+ * revised drawing) and accepted; then the Archive — its keeping periods, a
+ * search by document code, one proposal's revisions — Rev A opened exactly as
+ * it was sent, the record pack made and checked, and what is inside it: the
+ * cover and Rev A's readable copy. The dashboard's panel now links each
+ * revision. On a phone too, and a scroll through the Archive.
+ */
+async function phase9Stills() {
+  const dir = resolve(OUT, 'phase9');
+  rmSync(dir, { recursive: true, force: true });
+  mkdirSync(dir, { recursive: true });
+  const shot = (page, name, opts = {}) => page.screenshot({ path: resolve(dir, name), ...opts });
+  const settle = (p, ms = 300) => p.waitForTimeout(ms);
+  const { attachInEditor, testPdf, readZip } = await import('../lib/server-suites.mjs');
+  const { textPdf } = await import('../lib/pdf-fixtures.mjs');
+
+  let { ctx, page, a } = await signedIn(1440, 900, 1);
+  await seeded(a);
+
+  // Rev A, as staff publish it.
+  const id = await openDemo(page, a);
+  await attachTestFiles(page);
+  await page.click('#ed-check');
+  await page.waitForSelector('dialog .ed-verdict');
+  for (const box of await page.$$('dialog .ed-ack input')) await box.check();
+  await page.click('#ck-publish');
+  await page.waitForSelector('dialog h2:has-text("Published")', { timeout: 30000 });
+  const [link, pass] = await page.$$eval('dialog .ed-secret code', (c) => c.map((x) => x.textContent));
+  await page.click('dialog .ed-dialog-head button');
+
+  // Rev B: the client's corridor drawing, revised from C to D.
+  const di = await page.evaluate(() => window.__editor.state.cfg.attachments.findIndex((c) => c.id === 'a3'));
+  await attachInEditor(page, di, 'AC-DWG-0142-rev-D.pdf', Buffer.from(textPdf(['Stage 2 corridor, civil drawing AC-DWG-0142, revision D', 'A fictional drawing for the Phase 9 screenshots.'], { pages: 2 })));
+  await page.fill(`[data-path="attachments.${di}.docRev"] input`, 'D');
+  await page.fill(`[data-path="attachments.${di}.docCode"] input`, 'AC-DWG-0142');
+  await page.keyboard.press('Control+s');
+  await page.waitForFunction(() => /^Saved/.test(document.getElementById('ed-saved').textContent));
+  await page.click('#ed-check');
+  await page.waitForSelector('dialog .ed-verdict');
+  for (const box of await page.$$('dialog .ed-ack input')) await box.check();
+  await page.fill('#ck-note', 'The client’s corridor drawing updated to revision D');
+  await page.click('#ck-publish');
+  await page.waitForSelector('dialog h2:has-text("Rev B")', { timeout: 30000 });
+  await page.click('dialog .ed-dialog-head button');
+
+  // The client accepts Rev B.
+  {
+    const c = await browser.newContext({ ...AU, viewport: { width: 1440, height: 900 }, reducedMotion: 'reduce' });
+    const p = await c.newPage();
+    await p.goto(link);
+    await p.fill('#gate-pass', pass);
+    await p.click('#gate-go');
+    await p.waitForFunction(() => document.documentElement.classList.contains('ready'), null, { timeout: 15000 });
+    await p.fill('[data-accept-form] [name="email"]', 'sam.whitlock@example.com');
+    await p.check('[data-accept-form] [name="authority"]');
+    await p.check('[data-accept-form] [name="accept"]');
+    await p.fill('[data-accept-form] [name="typed"]', 'Sam Whitlock');
+    await p.click('[data-accept-go]');
+    await p.waitForSelector('[data-accept-done]:not([hidden])', { timeout: 20000 });
+    await c.close();
+  }
+  const revs = await page.evaluate(async (pid) => {
+    const r = await (await fetch('/api/archive', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'search', proposal: pid }) })).json();
+    return r.rows.map((x) => ({ id: x.revisionId, rev: x.rev, ref: x.reference }));
+  }, id);
+  const revA = revs.find((r) => r.rev === 'A');
+
+  // The Archive.
+  const archive = async (p, query = '') => {
+    await p.goto(`${a.url}/archive${query}`);
+    await p.waitForSelector('.arc-prop');
+    await p.evaluate(() => { document.documentElement.style.scrollBehavior = 'auto'; });
+    await p.mouse.move(1, 1);
+    await settle(p);
+  };
+  await archive(page);
+  await shot(page, '1440-01-archive.png');
+  await archive(page, '?q=AC-DWG-0142');
+  await page.evaluate(() => document.querySelector('.arc-doc.is-hit').scrollIntoView({ block: 'center' }));
+  await settle(page, 150);
+  await shot(page, '1440-02-search-by-drawing-number.png');
+  await archive(page, `?proposal=${id}`);
+  await page.click('.arc-rev:nth-child(2) .db-textbtn[aria-expanded]');
+  await settle(page, 150);
+  await page.evaluate(() => document.querySelector('.arc-prop').scrollIntoView({ block: 'start' }));
+  await page.evaluate(() => window.scrollBy(0, -80));
+  await page.mouse.move(1, 1);
+  await shot(page, '1440-03-one-proposal-both-revisions.png');
+
+  // Rev A, exactly as it was sent.
+  const sent = await ctx.newPage();
+  await sent.goto(`${a.url}/staff/revision/${revA.id}`);
+  await sent.waitForFunction(() => document.documentElement.classList.contains('ready'), null, { timeout: 20000 });
+  await sent.evaluate(() => { document.documentElement.style.scrollBehavior = 'auto'; });
+  await settle(sent, 600);
+  await shot(sent, '1440-04-rev-a-as-sent.png');
+  for (let i = 0; i < 3; i += 1) {
+    await sent.evaluate(() => { const s = document.getElementById('attachments'); window.scrollTo(0, s.getBoundingClientRect().top + window.scrollY - 64); });
+    await settle(sent, 500);
+  }
+  await sent.mouse.move(1, 1);
+  await shot(sent, '1440-05-rev-a-documents-as-sent.png');
+  await sent.close();
+
+  // The record pack.
+  await archive(page, `?proposal=${id}`);
+  const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 180000 }), page.click('.arc-prop-foot button')]);
+  const zip = readFileSync(await dl.path());
+  await page.waitForSelector('.arc-pack-verdict');
+  await page.mouse.move(1, 1);
+  await settle(page);
+  await shot(page, '1440-06-record-pack-ready.png');
+  await page.click('#db-panel .db-close');
+  writeFileSync(resolve(dir, dl.suggestedFilename()), zip);
+  const packDir = resolve(dir, 'pack');
+  for (const [name, bytes] of readZip(zip)) {
+    const out = resolve(packDir, name);
+    mkdirSync(dirname(out), { recursive: true });
+    writeFileSync(out, bytes);
+  }
+  const folder = readdirSync(packDir)[0];
+  const fp = await ctx.newPage();
+  await fp.goto(`file://${resolve(packDir, folder, 'index.html')}`);
+  await settle(fp);
+  await shot(fp, '1440-07-pack-cover.png', { fullPage: true });
+  await fp.goto(`file://${resolve(packDir, folder, 'revisions/rev-A/readable.html')}`);
+  await settle(fp, 600);
+  await shot(fp, '1440-08-pack-rev-a-readable-copy.png');
+  await fp.close();
+
+  // Keeping periods, as an administrator sees them before they are set.
+  await archive(page);
+  await page.click('#arc-keep-edit');
+  await page.waitForSelector('.arc-keep-form');
+  await page.locator('.arc-keep-form input').first().blur();
+  await settle(page);
+  await shot(page, '1440-09-keeping-periods.png');
+  await page.click('#db-panel .db-close');
+
+  // The dashboard's panel: each revision opens as it was sent.
+  await page.goto(`${a.url}/dashboard?open=${id}`);
+  await page.waitForSelector('.db-revs');
+  await page.evaluate(() => { const r = document.querySelector('.db-revs'); r.scrollIntoView({ block: 'center' }); });
+  await page.mouse.move(1, 1);
+  await settle(page);
+  await shot(page, '1440-10-dashboard-panel-revisions.png');
+
+  // A scroll through the Archive.
+  const state = await ctx.storageState();
+  const vdir = resolve(OUT, 'video-tmp');
+  rmSync(vdir, { recursive: true, force: true });
+  const rctx = await browser.newContext({ ...AU, viewport: { width: 1440, height: 900 }, storageState: state, recordVideo: { dir: vdir, size: { width: 1440, height: 900 } } });
+  const rp = await rctx.newPage();
+  await archive(rp);
+  await rp.waitForTimeout(1200);
+  const total = await rp.evaluate(() => document.documentElement.scrollHeight - window.innerHeight);
+  for (let y = 0; y < total; y += 36) { await rp.evaluate((top) => window.scrollTo(0, top), y); await rp.waitForTimeout(64); }
+  await rp.waitForTimeout(1200);
+  await rctx.close();
+  const webm = readdirSync(vdir).find((f) => f.endsWith('.webm'));
+  renameSync(resolve(vdir, webm), resolve(dir, 'archive-scroll-1440.webm'));
+  rmSync(vdir, { recursive: true, force: true });
+  spawnSync('ffmpeg', ['-y', '-loglevel', 'error', '-i', resolve(dir, 'archive-scroll-1440.webm'), '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', resolve(dir, 'archive-scroll-1440.mp4')]);
+
+  // On a phone.
+  const pctx = await browser.newContext({ ...AU, viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, reducedMotion: 'reduce', storageState: state });
+  const pp = await pctx.newPage();
+  await archive(pp);
+  await shot(pp, '390-01-archive.png');
+  await archive(pp, `?proposal=${id}`);
+  await pp.click('.arc-rev:nth-child(2) .db-textbtn[aria-expanded]');
+  await pp.evaluate(() => { document.querySelector('.arc-revs').scrollIntoView({ block: 'start' }); window.scrollBy(0, -70); });
+  await settle(pp);
+  await shot(pp, '390-02-one-proposal.png');
+  await pp.goto(`${a.url}/staff/revision/${revA.id}`);
+  await pp.waitForFunction(() => document.documentElement.classList.contains('ready'), null, { timeout: 20000 });
+  await settle(pp, 600);
+  await shot(pp, '390-03-rev-a-as-sent.png');
+  await archive(pp, `?proposal=${id}`);
+  const [pdl] = await Promise.all([pp.waitForEvent('download', { timeout: 180000 }), pp.click('.arc-prop-foot button')]);
+  await pdl.path();
+  await pp.waitForSelector('.arc-pack-verdict');
+  await pp.mouse.move(1, 1);
+  await settle(pp);
+  await shot(pp, '390-04-record-pack-ready.png');
+  await pp.click('#db-panel .db-close');
+  await pp.goto(`${a.url}/dashboard`);
+  await pp.waitForSelector('.db-svg');
+  await settle(pp);
+  await shot(pp, '390-05-dashboard-top-bar.png', { clip: { x: 0, y: 0, width: 390, height: 200 } });
+  await pctx.close();
+  await ctx.close();
+  return readdirSync(dir).length;
+}
+
 async function pdf() {
   const page = await browser.newPage({ ...AU, viewport: { width: 1200, height: 900 }, reducedMotion: 'reduce' });
   await ready(page);
@@ -1121,6 +1320,7 @@ try {
     ['--phase6', 'phase6/', phase6Stills, 'files'],
     ['--phase7', 'phase7/', phase7Stills, 'captures'],
     ['--phase8', 'phase8/', phase8Stills, 'files'],
+    ['--phase9', 'phase9/', phase9Stills, 'files'],
   ].filter(([flag]) => process.argv.includes(flag));
   if (PARTS.length) {
     for (const [, dir, run, what] of PARTS) console.log(`demo-out/${dir}: ${await run()} ${what}`);
@@ -1137,7 +1337,8 @@ try {
     const p6 = await phase6Stills();
     const p7 = await phase7Stills();
     const p8 = await phase8Stills();
-    console.log(`demo-out/: ${desk} sections at 1440, ${phone} at 390, arrival shots, two scroll videos, A4 PDF, ${e} editor, ${p3} Phase 3, ${p4} Phase 4, ${p5} Phase 5 captures, ${p6} Phase 6 files, ${p7} Phase 7 captures and ${p8} Phase 8 files`);
+    const p9 = await phase9Stills();
+    console.log(`demo-out/: ${desk} sections at 1440, ${phone} at 390, arrival shots, two scroll videos, A4 PDF, ${e} editor, ${p3} Phase 3, ${p4} Phase 4, ${p5} Phase 5 captures, ${p6} Phase 6 files, ${p7} Phase 7 captures, ${p8} Phase 8 and ${p9} Phase 9 files`);
   }
 } finally {
   await browser.close();

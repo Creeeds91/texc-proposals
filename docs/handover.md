@@ -18,6 +18,7 @@ online, and how to look after it. For Brand in Black and TEXC. The plan is
 | 6 | Dashboard and archive: figures, chart, follow-ups, search, history, CSV | §17 |
 | 7 | Hardening and handover: deleting for good, two security reviews, accessibility, speed, this document, the staff guide | §18 |
 | 8 | Documents: a library of standing documents (certificates, licences, procedures) offered on any proposal, with expiry watched; several PDFs at once | §19 |
+| 9 | The archive: every revision ever sent, found by client, site, service, reference or document code and opened as it was sent; a record pack per proposal with every fingerprint checked; keeping periods and a daily retention run | §20 |
 
 Nothing is deployed. Everything runs locally against a throwaway database
 (`node scripts/demo/local-app.mjs`), and every check passes there.
@@ -39,6 +40,7 @@ them, but a proposal should not go to a client until each is settled.
 | C26 | Whether TEXC's Basement Grotesque licence covers this site | Until then labels and body text use a system fallback |
 | C39 | Follow-up timings, archive reasons, default period | Defaults chosen by Brand in Black |
 | C40 | The standing documents for the library, and who checks a certificate before it is approved | The library starts empty |
+| C43 | How long proposal records are kept: when an expired, unaccepted proposal is archived, and how many years an accepted one is kept | Until set, nothing is archived automatically and no accepted proposal can be deleted |
 
 The full list, with sources, is `docs/open-items.md`.
 
@@ -62,6 +64,9 @@ Paid services need Jesse's approval before they are created (D2).
    - `ACCOUNT_SUPERS`: Brand in Black's addresses. `ACCOUNT_DOMAINS`: `texc.au`.
    - `PUBLIC_BASE_URL`, `MAIL_FROM`, `SMTP2GO_API_KEY`, `NOTIFY_TO` (and
      `NOTIFY_BCC` if a records mailbox should get every acceptance).
+   - `CRON_SECRET` (Production): at least 16 random characters
+     (`openssl rand -hex 24`). Vercel sends it to the daily retention run;
+     without it the run never happens (D7).
 4. **A preview deployment first** (`DEMO_PUBLIC=1` on Preview only). Turn
    the Vercel Toolbar off for Preview (project Settings → General): it
    injects a script the strict policy blocks, and its errors would cloud
@@ -91,7 +96,11 @@ Paid services need Jesse's approval before they are created (D2).
    as administrator under People. George then approves his own staff.
 7. **A first real proposal end to end**, to a TEXC address acting as the
    client: publish, open, open a document, accept, and check the emails and
-   the record.
+   the record. Then take its record pack from the Archive: it must say every
+   fingerprint matches.
+8. **The daily run** (D7): in Vercel, Settings → Cron Jobs lists
+   `/api/retention` once a day. With no keeping period set it archives
+   nothing; the staff audit shows a run only when it archived something.
 
 ## 4. Looking after it
 
@@ -113,7 +122,11 @@ Paid services need Jesse's approval before they are created (D2).
   recorded acceptances, archives, exports, deletions. Read it in Supabase's
   table editor or SQL editor; it cannot be changed or deleted.
 - **Deleting for good** (Brand in Black, from the dashboard): only 90 days
-  after archiving, never an accepted proposal, by typing its reference.
+  after archiving, by typing its reference; an accepted proposal only after
+  its keeping period, and never while none is set.
+- **Records for an inquiry or a dispute**: the Archive's record pack for that
+  proposal (editors and administrators). Keep the zip as it is; anyone can
+  re-check it with `sha256sum -c SHA256SUMS`.
 - **Rotating the Supabase secret key**: create the new key, update
   `SUPABASE_SECRET_KEY` in Vercel, redeploy, then revoke the old key.
 - **The care plan** is mandatory for the first 12 months (Brand in Black's

@@ -1570,7 +1570,7 @@ export async function suiteDeploy() {
     [/^D1: \/supabase\/schema\.sql answered 200/, 'the schema served'],
     [/^D1: \/\.env\.example answered 200/, 'the environment template served'],
     [/^the client page sends more than one Content-Security-Policy/, 'two policies on the client page'],
-    [/^the client page: x-frame-options is missing/, 'the shared headers missing'],
+    [/^the client page: .*x-frame-options is missing/, 'the shared headers missing'],
     [/^the 404 page is not this checkout's build/, 'a 404 that is not the styled page'],
     [/^\/signin answered 404/, 'no sign-in page'],
     [/^GET \/api\/accept answered 404/, 'no functions'],
@@ -1630,6 +1630,10 @@ export async function suiteA11y() {
     { name: 'editor', url: `/editor/${live.id}`, ready: '#ed-panels .ed-panel', staff: true },
     { name: 'documents', url: '/documents', ready: '.lib-item', staff: true },
     { name: 'documents, one document', url: `/documents?open=${libItem.id}`, ready: '.lib-approve', staff: true },
+    { name: 'archive', url: '/archive', ready: '.arc-prop', staff: true },
+    { name: 'archive, a revision\'s documents', url: `/archive?proposal=${live.id}`, ready: '.arc-rev', click: '.arc-rev .db-textbtn[aria-expanded]', then: '.arc-docs:not([hidden])', staff: true },
+    { name: 'archive, keeping periods', url: '/archive', ready: '.arc-prop', click: '#arc-keep-edit', then: '.arc-keep-form', staff: true },
+    { name: 'a revision as sent', url: `/staff/revision/${q(`select current_revision_id from public.texc_proposals where id = '${live.id}'`)}`, ready: 'html.ready #staff-strip:not([hidden])', staff: true },
   ];
   const found = [];
   let checked = 0;
@@ -1644,6 +1648,10 @@ export async function suiteA11y() {
           await page.fill('#gate-pass', live.passphrase);
           await page.click('#gate-go');
           await page.waitForFunction(() => document.documentElement.classList.contains('unlocked'), null, { timeout: 20000 });
+        }
+        if (pg.click) {
+          await page.click(pg.click);
+          await page.waitForSelector(pg.then, { timeout: 20000 });
         }
         await page.waitForTimeout(400);
         await page.evaluate(axe);

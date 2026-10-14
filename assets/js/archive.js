@@ -68,8 +68,10 @@ function renderKeep() {
       : notSet(`Kept, and can never be deleted, until ${BRAND.name} sets a period.`)],
     ['Never accepted', 'Can be deleted 90 days after it was archived, by Brand in Black only, and only by typing its reference.'],
   ];
-  $('arc-keep-list').replaceChildren(...rows.flatMap(([label, value]) => [h('dt', { text: label }), h('dd', {}, value)]),
-    k.updatedAt ? h('p', { class: 'db-note arc-keep-by', text: `Last changed ${at(k.updatedAt)} by ${k.updatedBy || 'unknown'}.` }) : null);
+  $('arc-keep-list').replaceChildren(...rows.flatMap(([label, value]) => [h('dt', { text: label }), h('dd', {}, value)]));
+  const by = $('arc-keep-by');
+  by.hidden = !k.updatedAt;
+  by.textContent = k.updatedAt ? `Last changed ${at(k.updatedAt)} by ${k.updatedBy || 'unknown'}.` : '';
 }
 
 function editKeep() {
@@ -199,9 +201,8 @@ function propCard(revs) {
         p.practice ? h('span', { class: 'db-tag', text: 'Practice' }) : null)),
     p.archivedAt && p.archiveReason ? h('p', { class: 'arc-prop-reason' }, icon('archive'), h('span', { text: p.archiveReason })) : null,
     h('ol', { class: 'arc-revs', reversed: true }, revs.map(revRow)),
-    h('footer', { class: 'arc-prop-foot' },
-      can('editor') ? h('button', { type: 'button', class: 'btn btn--primary btn--sm', onclick: () => pack(p) }, icon('download'), h('span', { text: 'Record pack' })) : null,
-      h('span', { class: 'db-note', text: can('editor') ? 'Every revision as published, each document as stored, the acceptance and the full history, with their fingerprints checked.' : 'An editor or an administrator can download this proposal’s record pack.' })));
+    can('editor') ? h('footer', { class: 'arc-prop-foot' },
+      h('button', { type: 'button', class: 'btn btn--primary btn--sm', 'aria-describedby': 'arc-pack-note', onclick: () => pack(p) }, icon('download'), h('span', { text: 'Record pack' }))) : null);
 }
 
 function render() {
@@ -251,6 +252,7 @@ async function pack(p) {
   try {
     const res = await buildPack({ proposalId: p.proposalId, api, step, brand: BRAND.name, services: state.services });
     bar.value = bar.max;
+    log.classList.add('is-done');
     const url = URL.createObjectURL(res.blob);
     const good = res.checks.length - res.bad.length;
     out.replaceChildren(
@@ -261,7 +263,8 @@ async function pack(p) {
           h('p', { class: 'db-note', text: 'The pack still holds everything that could be fetched, and its cover names the problem. Tell Brand in Black.' })))
         : h('p', { class: 'arc-pack-verdict', role: 'status' }, icon('check-circle'), h('span', { text: `Ready. All ${res.checks.length} recorded fingerprints match.` })),
       h('p', { class: 'db-actions' },
-        h('a', { class: 'btn btn--primary btn--sm', href: url, download: res.name }, icon('download'), h('span', { text: `Save ${res.name} (${kb(res.blob.size)})` }))));
+        h('a', { class: 'btn btn--primary btn--sm', href: url, download: res.name }, icon('download'), h('span', { text: `Save the record pack (${kb(res.blob.size)})` }))),
+      h('p', { class: 'arc-pack-file', text: res.name }));
     out.querySelector('a[download]').click();
   } catch (err) {
     out.replaceChildren(h('p', { class: 'db-error', role: 'alert', text: (err && err.userMessage) || 'The pack could not be made. Try again.' }));
@@ -321,6 +324,9 @@ async function boot() {
   $('db-loading').hidden = true;
   fillSelects();
   renderKeep();
+  $('arc-pack-note').textContent = can('editor')
+    ? 'A proposal’s record pack holds every revision as published, each document as stored, the acceptance and the full history, with their fingerprints checked against those recorded at the time.'
+    : 'An editor or an administrator can download a proposal’s record pack: every revision, document, acceptance and event, with their fingerprints checked.';
   for (const el of D.querySelectorAll('.arc-keep, .arc-list')) el.hidden = false;
   writeAddress();
   for (const k of ['year', 'service', 'region', 'show']) $(`f-${k}`).addEventListener('change', (e) => setFilter(k, e.target.value));

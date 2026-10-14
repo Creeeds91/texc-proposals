@@ -1066,3 +1066,109 @@ purge), shown to fail when "current" means the oldest approved file;
 `editor` (choosing from the library, several files, a drop on a card);
 `lifecycle` (the follow-up); `a11y` (the Documents page and its panel);
 `deploy` (`/documents`).
+
+## 20. Phase 9 as built (14 Oct 2026)
+
+The archive: every revision ever sent, found and opened as it was sent; one
+proposal's whole record as a pack; and keeping periods. Approved with Phase 8
+as one variation.
+
+**Search** (`/archive`, `templates/archive.html`, `assets/js/archive.js`,
+`api/archive.js`, `lib/archive.js`). `texc_archive(p)` returns one row per
+published revision, newest first, archived proposals and practice ones
+included: the proposal's facts, the revision's state (current, superseded,
+withdrawn), its acceptance, and the documents it offered, taken from the
+revision's own published text (what the client saw) with the fingerprints
+from its snapshot, never a storage path. A revision matches when its
+proposal matches the dashboard's search (`texc_search`: reference, project,
+client, site, services) or every word appears in its documents' titles and
+codes, so a drawing number finds the revision that sent that drawing. It
+filters by the year it was sent (Hobart), service, region and one proposal.
+The page groups the rows by proposal, and shows practice proposals only
+when asked.
+
+**Any revision, as it was sent** (`/staff/revision/<id>`,
+`api/revision-view.js`, `assets/js/archive-view.js`). The page is the client
+page itself, built from the same template (`lib/revision-html.js`) and booted
+by `archive-view.js` instead of the gate: it asks `/api/archive` for the
+revision's published text (less the sealed view token), signs its
+photographs for an hour and draws it with the same runtime. A staff strip
+above it says which revision it is, when and by whom it was sent, whether it
+was accepted, superseded or withdrawn since, and whether the proposal is
+archived. Its documents open from that revision's snapshot, so Rev A's
+drawing is the file Rev A sent even after Rev B replaced it. Nothing is
+recorded as the client's: no open, no event; the acceptance shows what was
+accepted and the forms say nothing is sent. A revision sent on another
+design version than the page's says so, plainly (none can yet: there is one
+version).
+
+**The record pack**, built in the staff member's browser by
+`assets/js/record-pack.js` and written as a zip by `assets/js/zip.js` (files
+stored, not compressed, so the bytes in the zip are the bytes fingerprinted):
+
+| File | What it is | Checked against |
+|---|---|---|
+| `index.html` | The cover and index: the proposal, every revision, the documents each sent, the acceptance, the keeping periods, and the verdict | — |
+| `manifest.json`, `SHA256SUMS` | Every file with its SHA-256; `sha256sum -c SHA256SUMS` re-checks the pack anywhere | — |
+| `revisions/rev-<X>/published.json` | The revision's published text, byte for byte | `plaintext_sha256`, recorded at publishing |
+| `revisions/rev-<X>/readable.html` | The revision drawn as the client saw it, for reading without this system | — (a convenience copy; the record is `published.json`) |
+| `documents/<name>-<sha>.pdf` | Every document any revision sent, once each, as stored | the revision snapshot's `sha256` |
+| `acceptances/rev-<X>.html` | Each acceptance record, the signature inside it | `record_sha256`, written at acceptance |
+| `history.csv`, `history.json` | Every event, open and staff action, oldest first | — |
+
+The readable copy is made by drawing the staff view in an off-screen frame
+on the Archive page (the only frame anything here allows: `REVISION_CSP` has
+`frame-ancestors 'self'` and `X-Frame-Options: SAMEORIGIN`, `ARCHIVE_CSP`
+adds `frame-src 'self'`, and nothing else may be framed), then copying it in
+an inert document with its stylesheets, fonts, icons and photographs inlined
+and every script removed; it carries a policy that lets it fetch and run
+nothing, and its document buttons become links into the pack. A file whose
+bytes do not match is still packed — the pack is evidence either way — and
+the mismatch is named on screen, on the cover and in the manifest.
+
+Only editors and administrators may take a pack, and the request is in the
+staff audit (`record_pack_requested`) before anything is handed over. The
+server sends the facts and published texts; each document is fetched through
+its own 60-second link; nothing is assembled or kept on the server. The CSV
+is written by the one cell rule (`assets/js/csv.js`), shared with the
+dashboard's export.
+
+**Keeping periods** (`lib/retention.js`, `texc_settings` key `retention`):
+
+- `archiveAfterDays` (7–3650): a proposal that ran out (valid-until, or the
+  link's expiry) without being accepted, and has not changed for that long
+  either, is archived by the daily run. Archiving never deletes.
+- `keepAcceptedYears` (1–100): an accepted proposal is kept that long after
+  its last acceptance; only after that can Brand in Black delete it, the
+  Phase 7 way (`texc_purge()` refuses earlier, and the dashboard says until
+  when).
+
+Both are unset until TEXC sets them (C43). Unset, nothing is archived
+automatically and an accepted proposal can never be deleted. A proposal that
+was never accepted can still be deleted 90 days after it was archived
+(Phase 7). Only an administrator changes them, through the Archive page; the
+change, with what it was, is in the staff audit first.
+
+**The daily run** (`api/retention.js`, `vercel.json` `"crons"`: 16:17 UTC,
+about 3 am in Hobart in summer and 2 am in winter). Vercel calls it with
+`Authorization: Bearer <CRON_SECRET>`; anything else gets a 401, and without
+a secret of at least 16 characters it never runs. It calls
+`texc_auto_archive()`, which archives through `texc_set_archived` as
+`retention` with the reason "Expired without acceptance (archived
+automatically, N days on)", and the run records what it archived. A proposal
+with any acceptance is never archived by it.
+
+**The dashboard** links each revision in a proposal's panel to its as-sent
+view, and the proposal to the Archive with its record pack; the staff top
+bar gains Archive.
+
+**Checks.** Schema proof 81 (the archive search, automatic archiving, and
+deletion only after the keeping period); `check.mjs archive` (who may see
+what, search, a revision as sent and its documents, the pack built in
+Chromium and every fingerprint in the zip checked independently, a stored
+file altered after sending named as not matching, keeping periods, the daily
+run and its secret); `lifecycle` (`keptUntil`, the history CSV); `csp`
+(each new page has exactly one policy and only the revision may be framed);
+`a11y` (the Archive, a revision's documents, the keeping periods panel and a
+revision as sent, at 1440 and 390); `deploy` (both pages, the retention run's
+refusal).

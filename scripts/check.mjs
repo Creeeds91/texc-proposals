@@ -57,6 +57,7 @@ import { inspectPdf } from '../lib/pdf-inspect.js';
 import { FIXTURES as PDF_FIXTURES } from './lib/pdf-fixtures.mjs';
 import { suiteSchema, suiteEnvelope, suiteRefusals, suiteAcceptance, suiteEditor, suiteFlow, suiteDashboard, suiteA11y, suiteDeploy, suiteLibrary, suiteArchive, closeServerSuites } from './lib/server-suites.mjs';
 import * as LC from '../assets/js/lifecycle.js';
+import { csvText } from '../assets/js/csv.js';
 import { toCsv, cell, COLUMNS as CSV_COLUMNS } from '../lib/report.js';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -429,11 +430,23 @@ function suiteLifecycle() {
   expect(lines[0].slice(1).split('","').length === CSV_COLUMNS.length, 'one header per column');
   for (const bad of ['"\'=HYPERLINK(""http://example.com"",""Click"")"', '"\'+SUM(A1)"', '"\'-2+3"', '"\'@cmd"']) expect(lines[1].includes(bad), `a formula-shaped cell was not defused: ${bad}`);
   expect(cell(null) === '""' && cell('Ashgrove Civil Pty Ltd') === '"Ashgrove Civil Pty Ltd"' && cell('\tx') === '"\'\tx"', 'ordinary cells are only quoted');
+  const hist = csvText([['What', 'Who'], ['published', '=cmd|calc']]);
+  expect(hist === '\ufeff"What","Who"\r\n"published","\'=cmd|calc"\r\n', `the record pack's history is not written the same way: ${JSON.stringify(hist)}`);
+
+  // 8. Keeping periods (Phase 9): an accepted proposal is kept until its last acceptance plus the period; no period, kept for good.
+  const kept = (ats, years) => { const d = LC.keptUntil(ats, years === undefined ? null : { keepAcceptedYears: years }); return d ? d.toISOString() : null; };
+  expect(kept(['2019-03-01T00:00:00Z'], undefined) === null && kept(['2019-03-01T00:00:00Z'], null) === null, 'with no keeping period an accepted proposal must have no end date');
+  expect(kept(['2019-03-01T00:00:00Z'], 0) === null && kept(['2019-03-01T00:00:00Z'], 1.5) === null && kept(['2019-03-01T00:00:00Z'], '7') === null, 'a keeping period that is not a whole number of years from 1 must count as not set');
+  expect(kept(['2019-03-01T00:00:00Z'], 7) === '2026-03-01T00:00:00.000Z', `seven years from 1 March 2019: ${kept(['2019-03-01T00:00:00Z'], 7)}`);
+  expect(kept(['2018-01-10T00:00:00Z', '2020-06-30T05:00:00Z'], 5) === '2025-06-30T05:00:00.000Z', 'the period runs from the LAST acceptance');
+  expect(kept(['2020-02-29T12:00:00Z'], 1) === '2021-03-01T12:00:00.000Z', `a leap-day acceptance: ${kept(['2020-02-29T12:00:00Z'], 1)}`);
+  expect(kept([], 7) === null && kept(['not a date'], 7) === null, 'no acceptance means no keeping date');
 
   return fails.length ? { status: FAIL, detail: fails } : { status: PASS, detail: [
     `${states.length} state cases in precedence order; follow-ups for unopened, quiet, expiring, a sent document lapsing, changes requested and re-acceptance; none for practice or accepted proposals`,
     'periods and months are Hobart calendar periods (the financial year turns at midnight in Hobart); figures are for the issued cohort, win rate leaves out withdrawn, practice never counts',
-    'list filters keep archived proposals out unless asked; the CSV quotes every cell and defuses =, +, -, @ and tab',
+    'list filters keep archived proposals out unless asked; the CSV and the record pack\'s history quote every cell and defuse =, +, -, @ and tab',
+    'keeping periods: kept until the last acceptance plus the period; no period (or a bad one) keeps it for good',
   ] };
 }
 
