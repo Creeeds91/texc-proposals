@@ -2,9 +2,12 @@
  * A Supabase-shaped stack on this machine, from nothing, with no network
  * beyond the first image pull and no production data:
  *
- *   Postgres 16   a scratch cluster, with Supabase's roles (anon, authenticated,
+ *   Postgres      a scratch cluster, with Supabase's roles (anon, authenticated,
  *                 service_role, authenticator) and Supabase's default grants, so
- *                 supabase/schema.sql is tested in the shape it really runs in
+ *                 supabase/schema.sql is tested in the shape it really runs in.
+ *                 The local Postgres 16 by default; TEXC_PG_IMAGE=postgres:17
+ *                 runs the official image of another version in Docker instead
+ *                 (hosted Supabase projects run 17)
  *   PostgREST     the real server Supabase puts in front of Postgres (Docker)
  *   gateway       a small Node front door that behaves like Supabase's for the
  *                 parts this app uses: the new `sb_secret_` key goes in the
@@ -30,6 +33,8 @@ import { fileURLToPath } from 'node:url';
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const PG_BIN = '/usr/lib/postgresql/16/bin';
 const POSTGREST_IMAGE = 'postgrest/postgrest:v12.2.3';
+// Another Postgres version, in Docker (e.g. postgres:17, as hosted Supabase runs).
+const PG_IMAGE = process.env.TEXC_PG_IMAGE || '';
 
 const b64url = (buf) => Buffer.from(buf).toString('base64').replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_');
 export function signJwt(payload, secret) {
@@ -46,7 +51,8 @@ function asPostgres(cmd, args, opts = {}) {
 }
 
 export function available() {
-  const pg = existsSync(join(PG_BIN, 'postgres'));
+  // psql comes from the local install either way; a Docker server needs only its client.
+  const pg = existsSync(join(PG_BIN, 'postgres')) || (!!PG_IMAGE && existsSync(join(PG_BIN, 'psql')));
   const docker = spawnSync('docker', ['info'], { encoding: 'utf8' }).status === 0;
   return { pg, docker };
 }
@@ -98,6 +104,7 @@ export async function startLocalSupabase({ dir, schema = true, quiet = true } = 
   if (!have.pg) return null;
   if (!ensureDocker()) return null;
   mkdirSync(dir, { recursive: true });
+  if (PG_IMAGE) return startWith(await dockerPostgres(), { dir, schema, quiet });
   // The server runs as the postgres user, which cannot reach most working
   // folders, so its cluster lives in a folder of its own under the system tmp.
   const pgRoot = join(tmpdir(), 'texc-pg-' + createHash('sha256').update(resolve(dir)).digest('hex').slice(0, 12));
@@ -114,8 +121,39 @@ export async function startLocalSupabase({ dir, schema = true, quiet = true } = 
   const start = asPostgres(join(PG_BIN, 'pg_ctl'), ['-D', pgdata, '-l', logFile, '-w', '-o', `-p ${pgPort} -k ${sock} -c listen_addresses=127.0.0.1 -c fsync=off`, 'start']);
   if (start.status !== 0) throw new Error('postgres did not start: ' + start.stderr + readFileSync(logFile, 'utf8').slice(-800));
   const conn = `postgresql://postgres@127.0.0.1:${pgPort}/postgres`;
+  return startWith({
+    conn,
+    stopDb: () => asPostgres(join(PG_BIN, 'pg_ctl'), ['-D', pgdata, '-m', 'immediate', 'stop']),
+    dropDb: () => rmSync(pgRoot, { recursive: true, force: true }),
+  }, { dir, schema, quiet });
+}
+
+/** A fresh Postgres from PG_IMAGE: a throwaway container, gone when it stops. */
+async function dockerPostgres() {
+  const port = await freePort();
+  const name = `texc-pg-${port}`;
+  const run = spawnSync('docker', ['run', '-d', '--rm', '--name', name, '--network', 'host',
+    '-e', 'POSTGRES_HOST_AUTH_METHOD=trust', '-e', 'POSTGRES_INITDB_ARGS=-E UTF8 --locale=C.UTF-8', PG_IMAGE,
+    'postgres', '-p', String(port), '-c', 'listen_addresses=127.0.0.1', '-c', 'fsync=off'], { encoding: 'utf8' });
+  if (run.status !== 0) throw new Error(`${PG_IMAGE} did not start: ${run.stderr}`);
+  const conn = `postgresql://postgres@127.0.0.1:${port}/postgres`;
+  // The image initialises on a socket only, then starts for real on the port:
+  // the first answer over TCP is the real server.
+  let ready = false;
+  for (let i = 0; i < 120 && !ready; i += 1) {
+    await new Promise((d) => setTimeout(d, 500));
+    try { ready = psql(conn, 'select 1') === '1'; } catch { ready = false; }
+  }
+  if (!ready) { spawnSync('docker', ['rm', '-f', name]); throw new Error(`${PG_IMAGE} did not accept connections`); }
+  const stopDb = () => spawnSync('docker', ['rm', '-f', name], { encoding: 'utf8' });
+  return { conn, stopDb, dropDb: () => {} };
+}
+
+async function startWith({ conn, stopDb, dropDb }, { dir, schema, quiet }) {
   psql(conn, SUPABASE_BOOTSTRAP);
   if (schema) psql(conn, resolve(ROOT, 'supabase/schema.sql'), { file: true });
+  const version = psql(conn, 'show server_version');
+  const pgPort = Number(new URL(conn).port);
 
   // PostgREST, the real one.
   const jwtSecret = randomBytes(32).toString('hex');
@@ -149,11 +187,11 @@ export async function startLocalSupabase({ dir, schema = true, quiet = true } = 
   const stop = () => {
     gateway.close();
     spawnSync('docker', ['rm', '-f', name], { encoding: 'utf8' });
-    asPostgres(join(PG_BIN, 'pg_ctl'), ['-D', pgdata, '-m', 'immediate', 'stop']);
+    stopDb();
   };
   /** Stop, and delete the cluster and stored files: the next start is an empty database. */
-  const destroy = () => { stop(); rmSync(pgRoot, { recursive: true, force: true }); rmSync(store, { recursive: true, force: true }); };
-  return { url: `http://127.0.0.1:${gwPort}`, secretKey, anonKey, conn, stop, destroy, dir };
+  const destroy = () => { stop(); dropDb(); rmSync(store, { recursive: true, force: true }); };
+  return { url: `http://127.0.0.1:${gwPort}`, secretKey, anonKey, conn, stop, destroy, dir, version };
 }
 
 /* ------------------------------------------------------------ the gateway */

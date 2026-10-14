@@ -56,7 +56,8 @@ export async function runSchemaProof({ log = () => {} } = {}) {
   let sb;
   try { sb = await startLocalSupabase({ dir, schema: false }); }
   catch (e) { return { ran: false, reason: e.message, results }; }
-  if (!sb) return { ran: false, reason: 'Postgres 16 or Docker is not available here', results };
+  if (!sb) return { ran: false, reason: 'Postgres or Docker is not available here', results };
+  log(`Postgres ${sb.version}`);
   const q = (sql) => psql(sb.conn, sql);
   try {
     log('Building from nothing');
@@ -385,7 +386,7 @@ export async function runSchemaProof({ log = () => {} } = {}) {
     const leftAcceptances = q(`select count(*) from public.texc_acceptances where proposal_id = '${pid}'`);
     ok('an accepted proposal is kept through its keeping period, and deleted, acceptance and all, only after it', !keptSeven.ok && /accepted proposals are kept/.test(keptSeven.text)
       && pastKeep.ok && pastKeep.json.acceptances >= 1 && leftAcceptances === '0', [keptSeven.text, pastKeep.text, leftAcceptances]);
-    return { ran: true, results };
+    return { ran: true, results, version: sb.version };
   } finally {
     sb.destroy();
   }

@@ -146,7 +146,7 @@ async function localApp() {
   if (APP) return APP;
   const { startLocalApp, codeFor, SUPER_EMAIL } = await import('./local-app.mjs');
   const app = await startLocalApp({ port: 4500 + Math.floor(Math.random() * 300) });
-  if (!app) throw new Error('the local stack could not start (Postgres 16 and Docker)');
+  if (!app) throw new Error('the local stack could not start (Postgres and Docker)');
   APP = { ...app, codeFor, SUPER_EMAIL };
   return APP;
 }

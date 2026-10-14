@@ -13,7 +13,7 @@
  *   deploy     scripts/deploy-check.mjs, the check run against a preview, run
  *              against the local app and against a careless server it must catch
  *
- * Each needs Postgres 16 and Docker (scripts/lib/local-supabase.mjs) and the
+ * Each needs Postgres and Docker (scripts/lib/local-supabase.mjs) and the
  * browser ones need Playwright; without them a suite reports NOT CHECKED.
  */
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSync } from 'node:fs';
@@ -125,7 +125,7 @@ async function demoProposal(c, { publish = true, mutate } = {}) {
   return { id, version: put.json.version, url: pub.json.url, slug: u.pathname.split('/')[2], t: u.searchParams.get('t'), passphrase: pub.json.passphrase };
 }
 
-const skipNoStack = () => ({ status: SKIP, detail: [`the local stack could not start (Postgres 16 and Docker)${appWhyNot ? `: ${appWhyNot}` : ''}`] });
+const skipNoStack = () => ({ status: SKIP, detail: [`the local stack could not start (Postgres and Docker)${appWhyNot ? `: ${appWhyNot}` : ''}`] });
 
 /* ------------------------------------------------------------ schema */
 
@@ -135,7 +135,7 @@ export async function suiteSchema() {
   const failed = out.results.filter((r) => !r.ok);
   return failed.length
     ? { status: FAIL, detail: failed.map((r) => `${r.label} → ${JSON.stringify(r.got)}`) }
-    : { status: PASS, detail: [`all ${out.results.length} promises held on a fresh Postgres 16 + PostgREST`, 'anon refused every table and function; revisions immutable; logs append-only; publish/rotate races refused'] };
+    : { status: PASS, detail: [`all ${out.results.length} promises held on a fresh Postgres ${out.version} + PostgREST`, 'anon refused every table and function; revisions immutable; logs append-only; publish/rotate races refused'] };
 }
 
 /* ------------------------------------------------------------ envelope */

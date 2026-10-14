@@ -159,7 +159,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const i = process.argv.indexOf('--port');
   const port = i > 0 ? Number(process.argv[i + 1]) : 4400;
   const app = await startLocalApp({ port, keep: process.argv.includes('--keep') });
-  if (!app) { console.error('NOT RUN — Postgres 16 or Docker is not available here'); process.exit(2); }
+  if (!app) { console.error('NOT RUN — Postgres or Docker is not available here'); process.exit(2); }
   console.log(`${app.url}/signin   sign in as ${SUPER_EMAIL}; codes at ${app.url}/__dev/outbox`);
   const bye = () => { app.stop(); process.exit(0); };
   process.on('SIGINT', bye);
