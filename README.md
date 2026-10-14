@@ -34,6 +34,7 @@ node scripts/demo/serve.mjs        # just the client demo page, with production'
 node scripts/check.mjs             # all checks
 node scripts/schema-standup-check.mjs   # prove supabase/schema.sql on a fresh database
 node scripts/demo/guide.mjs        # the staff guide as a printable PDF (demo-out/editor-guide.pdf)
+node scripts/deploy-check.mjs --url <address>   # a deployed copy, from outside (GET only); --production once live
 node scripts/demo/capture.mjs      # screenshots, scroll videos and A4 PDF into demo-out/ (--editor, --phase3 … --phase7 for one set or several)
 ```
 
@@ -48,7 +49,9 @@ database every time. Sign in as `studio@example.com`; the "emailed" code is at
 Step by step in `docs/handover.md` §3: Supabase in Sydney on a paid plan
 (`supabase/schema.sql` declares the private buckets too), SMTP2GO with SPF and
 DKIM, Vercel with the variables in `.env.example`, a preview deployment to
-prove D1, D3, D4 and D5, then the domain and the first accounts.
+prove D1, D3, D4 and D5 (`scripts/deploy-check.mjs` covers D1, D3 and the
+headers; D4 and D5 are a document attached and opened by hand), then the
+domain and the first accounts.
 
 The accessibility and Lighthouse checks use two tools kept outside this
 repository: `npm install --prefix ~/.cache/texc-audit-tools axe-core@4.13.0 lighthouse@13.4.1`

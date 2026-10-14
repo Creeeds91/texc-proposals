@@ -10,11 +10,14 @@
  *   editor     the editor, driven in Chromium against the real stack
  *   flow       staff to client: sign in, publish, unlock, revise, supersede,
  *              approve a new person — the whole loop in a browser
+ *   deploy     scripts/deploy-check.mjs, the check run against a preview, run
+ *              against the local app and against a careless server it must catch
  *
  * Each needs Postgres 16 and Docker (scripts/lib/local-supabase.mjs) and the
  * browser ones need Playwright; without them a suite reports NOT CHECKED.
  */
-import { readFileSync, existsSync, mkdirSync, readdirSync } from 'node:fs';
+import { readFileSync, existsSync, mkdirSync, readdirSync, statSync } from 'node:fs';
+import { createServer } from 'node:http';
 import { deflateSync, crc32 as zlibCrc32 } from 'node:zlib';
 import { spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
@@ -24,6 +27,7 @@ import { runSchemaProof } from '../schema-standup-check.mjs';
 import { encryptRevision, rewrap } from '../../lib/envelope.js';
 import { sha256 } from '../../lib/tokens.js';
 import { runChecks } from '../../assets/js/checks.js';
+import { CLIENT_CSP } from '../../lib/csp.js';
 import { FIXTURES as PDF_FIXTURES, textPdf } from './pdf-fixtures.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
@@ -1294,6 +1298,57 @@ export async function suiteDashboard() {
  * from the demo, the gate, a proposal unlocked down to its acceptance form,
  * a dead link, sign-in, the dashboard and its history panel, the editor.
  */
+/**
+ * The deploy check (scripts/deploy-check.mjs) is what a person runs against a
+ * preview before anyone relies on it. Here it runs against the local app,
+ * which applies vercel.json's rewrites and headers as Vercel does, signed in,
+ * and must find nothing wrong. Then against a careless server, one that
+ * serves the whole repository without headers and sends the client page two
+ * policies, and it must name each of those.
+ */
+export async function suiteDeploy() {
+  const a = await app();
+  if (!a) return skipNoStack();
+  const { runDeployCheck } = await import('../deploy-check.mjs');
+  const fails = [];
+  const staff = await checkStaff(a);
+  const session = staff.cookie().split('=').slice(1).join('=');
+  const r = await runDeployCheck({ url: a.url, session });
+  if (!r.reached) return { status: FAIL, detail: [`the deploy check could not reach the local app: ${r.why}`] };
+  fails.push(...r.wrong.map((w) => `against the local app: ${w}`));
+  fails.push(...r.notChecked.filter((l) => !l.startsWith('D4')).map((l) => `against the local app, not checked: ${l}`));
+
+  const careless = createServer((req, res) => {
+    const path = decodeURIComponent(new URL(req.url, 'http://x').pathname);
+    const client = path.startsWith('/p/');
+    const file = client ? resolve(ROOT, 'views/proposal.html') : resolve(ROOT, `.${path}`);
+    if (client) res.setHeader('Content-Security-Policy', [CLIENT_CSP, CLIENT_CSP]);
+    if (!file.startsWith(ROOT) || !existsSync(file) || statSync(file).isDirectory()) { res.statusCode = 404; res.end('Not found'); return; }
+    res.end(readFileSync(file));
+  });
+  await new Promise((done) => careless.listen(0, '127.0.0.1', done));
+  let bad;
+  try { bad = await runDeployCheck({ url: `http://127.0.0.1:${careless.address().port}` }); } finally { careless.close(); }
+  const caught = [
+    [/^D1: \/lib\/editor-html\.js answered 200 with the repository's own file/, 'the editor and its library served'],
+    [/^D1: \/supabase\/schema\.sql answered 200/, 'the schema served'],
+    [/^D1: \/\.env\.example answered 200/, 'the environment template served'],
+    [/^the client page sends more than one Content-Security-Policy/, 'two policies on the client page'],
+    [/^the client page: x-frame-options is missing/, 'the shared headers missing'],
+    [/^the 404 page is not this checkout's build/, 'a 404 that is not the styled page'],
+    [/^\/signin answered 404/, 'no sign-in page'],
+    [/^GET \/api\/accept answered 404/, 'no functions'],
+  ];
+  for (const [re, what] of caught) if (!bad.reached || !bad.wrong.some((w) => re.test(w))) fails.push(`a careless server got past it: ${what}`);
+  return fails.length
+    ? { status: FAIL, detail: fails }
+    : { status: PASS, detail: [
+      `against the local app (vercel.json applied as Vercel does), signed in: ${r.held.length} things held, nothing wrong`,
+      ...r.held.map((l) => `  ${l}`),
+      `against a careless server it names all ${caught.length}: ${caught.map(([, w]) => w).join('; ')}`,
+    ] };
+}
+
 export async function suiteA11y() {
   const a = await app();
   if (!a) return skipNoStack();

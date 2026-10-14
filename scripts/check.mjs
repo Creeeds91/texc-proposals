@@ -25,6 +25,8 @@
  *   editor        the editor against the real stack: edits, rows, CONFIRM, upload,
  *                 checklist, server autosave, a colleague's conflicting save, phone   (stack + browser)
  *   flow          staff to client: publish, unlock, revise, supersede, rotate, approve a person   (stack + browser)
+ *   deploy        scripts/deploy-check.mjs against the local app, signed in, and against a
+ *                 careless server it must catch (it is run against a real preview by hand)   (stack)
  *   attachments   the PDF check: built fixtures for each way a file can be unsafe, TEXC's
  *                 own suite PDFs against a second parser's view of them, their flattened
  *                 copies, and a fuzz that it never throws     (poppler, pypdf, sibling ../texc)
@@ -48,7 +50,7 @@ import { runChecks } from '../assets/js/checks.js';
 import { scanText, localityWarning } from '../assets/js/sensitive.js';
 import { inspectPdf } from '../lib/pdf-inspect.js';
 import { FIXTURES as PDF_FIXTURES } from './lib/pdf-fixtures.mjs';
-import { suiteSchema, suiteEnvelope, suiteRefusals, suiteAcceptance, suiteEditor, suiteFlow, suiteDashboard, suiteA11y, closeServerSuites } from './lib/server-suites.mjs';
+import { suiteSchema, suiteEnvelope, suiteRefusals, suiteAcceptance, suiteEditor, suiteFlow, suiteDashboard, suiteA11y, suiteDeploy, closeServerSuites } from './lib/server-suites.mjs';
 import * as LC from '../assets/js/lifecycle.js';
 import { toCsv, cell, COLUMNS as CSV_COLUMNS } from '../lib/report.js';
 
@@ -186,8 +188,24 @@ function suiteCsp() {
   const cfg = JSON.parse(read('vercel.json'));
   const all = (cfg.headers || []).find((h) => h.source === '/(.*)');
   const get = (k) => all && (all.headers.find((h) => h.key.toLowerCase() === k.toLowerCase()) || {}).value;
-  const csp = get('Content-Security-Policy') || '';
+  const policyOf = (rule) => (rule.headers.find((h) => h.key === 'Content-Security-Policy') || {}).value;
+  const policyRules = (cfg.headers || []).filter(policyOf).map((r) => ({ re: new RegExp('^' + r.source + '$'), value: policyOf(r) }));
+  const policiesFor = (path) => policyRules.filter((r) => r.re.test(path)).map((r) => r.value);
+  // Every path has exactly one policy, from one place: vercel.json for static
+  // files and plain endpoints, the function itself for the pages that set
+  // their own. Then nothing depends on which wins when two disagree.
+  const csp = policiesFor('/p/check')[0] || '';
   if (csp !== CLIENT_CSP) problems.push('vercel.json CSP differs from CLIENT_CSP in lib/csp.js — change one place, then copy it');
+  const id = '00000000-0000-4000-8000-000000000000';
+  for (const path of ['/', '/p/check', '/demo', '/signin', '/dashboard', '/api/proposal', '/views/proposal.html', '/assets/css/proposal.css', '/no-such-page']) {
+    const got = policiesFor(path);
+    if (got.length !== 1 || got[0] !== CLIENT_CSP) problems.push(`${path} gets ${got.length} policies from vercel.json, not just CLIENT_CSP`);
+  }
+  for (const path of ['/editor', `/editor/${id}`, '/api/editor', `/staff/acceptance/${id}`, '/api/acceptance-record']) {
+    if (policiesFor(path).length) problems.push(`${path} sets its own policy, but vercel.json also sends one`);
+  }
+  const workerPath = '/assets/vendor/pdfjs/x/build/pdf.worker.min.mjs';
+  if (policiesFor(workerPath).length !== 1) problems.push(`${workerPath} gets ${policiesFor(workerPath).length} policies from vercel.json, not one`);
   for (const [label, policy] of [['client', csp], ['editor', EDITOR_CSP]]) {
     for (const must of ["default-src 'none'", "script-src 'self'", "style-src 'self'", "frame-ancestors 'none'", "base-uri 'none'", "object-src 'none'", "form-action 'self'"]) {
       if (!policy.includes(must)) problems.push(`${label} CSP lacks ${must}`);
@@ -200,7 +218,6 @@ function suiteCsp() {
   const vendor = (cfg.headers || []).find((h) => h.source === '/assets/vendor/(.*)');
   const vendorCsp = vendor && (vendor.headers.find((h) => h.key === 'Content-Security-Policy') || {}).value;
   if (vendorCsp !== WORKER_CSP) problems.push('vercel.json does not send WORKER_CSP with /assets/vendor/ (the pdf.js worker)');
-  if (cfg.headers.indexOf(vendor) < cfg.headers.indexOf(all)) problems.push('the /assets/vendor/ header rule must come after /(.*) so its policy wins');
   for (const never of ["'unsafe-inline'", "'unsafe-eval'", 'blob:', 'data:', '*']) if (WORKER_CSP.split(/[\s;]+/).includes(never)) problems.push(`the worker CSP allows ${never}`);
   if (!/connect-src 'self'( https:\/\/\S+)?;/.test(CLIENT_CSP) || !CLIENT_CSP.includes("worker-src 'self'")) problems.push('the client CSP must allow the viewer\'s worker and its fetch of the storage host, and nothing wider');
   if (get('X-Frame-Options') !== 'DENY') problems.push('X-Frame-Options must be DENY');
@@ -209,7 +226,7 @@ function suiteCsp() {
   if (!/noindex/.test(get('X-Robots-Tag') || '')) problems.push('X-Robots-Tag must carry noindex');
   if (!/Disallow:\s*\/\s*$/m.test(read('robots.txt'))) problems.push('robots.txt must disallow everything');
   if (!(cfg.regions || []).includes('syd1')) problems.push('functions must be pinned to syd1');
-  return problems.length ? { status: FAIL, detail: problems } : { status: PASS, detail: ['views and the editor page clean and current; headers strict', 'vercel.json CSP = CLIENT_CSP; EDITOR_CSP adds only img-src blob:', 'the pdf.js worker runs under its own narrower policy (no eval, no blob:, own origin only)'] };
+  return problems.length ? { status: FAIL, detail: problems } : { status: PASS, detail: ['views and the editor page clean and current; headers strict', 'vercel.json CSP = CLIENT_CSP; EDITOR_CSP adds only img-src blob:; every path gets exactly one policy, from one place', 'the pdf.js worker runs under its own narrower policy (no eval, no blob:, own origin only)'] };
 }
 
 /* ---------------------------------------------------------- conventions */
@@ -862,7 +879,7 @@ const SUITES = {
   confirm: suiteConfirm, render: suiteRender, print: suitePrint, 'content-sync': suiteContentSync,
   lifecycle: suiteLifecycle,
   schema: suiteSchema, envelope: () => suiteEnvelope({ browserSession }), refusals: suiteRefusals, acceptance: suiteAcceptance, editor: suiteEditor, flow: suiteFlow,
-  dashboard: suiteDashboard, a11y: suiteA11y, budget: suiteBudget, lighthouse: suiteLighthouse,
+  dashboard: suiteDashboard, a11y: suiteA11y, budget: suiteBudget, lighthouse: suiteLighthouse, deploy: suiteDeploy,
 };
 
 const wanted = args.filter((a) => !a.startsWith('--'));

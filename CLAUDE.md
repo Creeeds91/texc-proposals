@@ -222,6 +222,14 @@ added later is appended with `alter table … add column`, never tidied into the
   NOT CHECKED.
 - After any change to the client page run `check.mjs render print a11y budget
   lighthouse`; after any change to the staff pages, `a11y`.
+- **Every path gets exactly one security policy, from one place**: `vercel.json`
+  for static files and plain endpoints, the function itself for a page that
+  sets its own (the editor, the acceptance record). Never let two rules match
+  one path; `check.mjs csp` fails if they do.
+- **A deployment is checked from outside**: `node scripts/deploy-check.mjs
+  --url <address>` (GET requests only; `--production` once live). `check.mjs
+  deploy` runs it against the local app and against a careless server it must
+  catch. Attaching and opening a document on a preview stays by hand (D4, D5).
 
 ## Generated files
 

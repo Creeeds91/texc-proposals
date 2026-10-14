@@ -22,7 +22,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const TYPES = {
   '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
   '.mjs': 'text/javascript; charset=utf-8', '.json': 'application/json; charset=utf-8', '.svg': 'image/svg+xml',
-  '.webp': 'image/webp', '.woff2': 'font/woff2', '.txt': 'text/plain; charset=utf-8', '.png': 'image/png', '.pdf': 'application/pdf',
+  '.webp': 'image/webp', '.woff2': 'font/woff2', '.txt': 'text/plain; charset=utf-8', '.png': 'image/png', '.pdf': 'application/pdf', '.wasm': 'application/wasm',
 };
 // Only what a deployment would serve. Source folders stay private.
 const PUBLIC = ['assets/', 'views/', 'fixtures/', 'robots.txt'];

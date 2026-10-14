@@ -60,16 +60,30 @@ Paid services need Jesse's approval before they are created (D2).
    - `ACCOUNT_SUPERS`: Brand in Black's addresses. `ACCOUNT_DOMAINS`: `texc.au`.
    - `PUBLIC_BASE_URL`, `MAIL_FROM`, `SMTP2GO_API_KEY`, `NOTIFY_TO` (and
      `NOTIFY_BCC` if a records mailbox should get every acceptance).
-4. **A preview deployment first.** On it, prove the four things that could
-   only be stood in for locally:
-   - D1: `/lib/editor-html.js` and `/content/library.seed.json` answer 404.
-   - D4: attach a document, preview it, download it (signed upload, CORS,
-     download name).
-   - D5: open a document in the client viewer with the console open: no
-     Content Security Policy errors.
+4. **A preview deployment first** (`DEMO_PUBLIC=1` on Preview only). Turn
+   the Vercel Toolbar off for Preview (project Settings → General): it
+   injects a script the strict policy blocks, and its errors would cloud
+   D5's console check. On the preview, prove what could only be stood in for
+   locally:
+   - Run `node scripts/deploy-check.mjs --url <the preview's address>`. Set
+     `VERCEL_PROTECTION_BYPASS` if the preview is protected, and
+     `STAFF_SESSION` to a signed-in session (the `__Host-texc_sess` cookie,
+     from the browser's developer tools) to include the editor and
+     dashboard. With GET requests only, it checks D1 (no private file is
+     served), that every page and file is this checkout's build, each page's
+     security policy (exactly one) and shared headers, pdf.js's own policy
+     and file types, the 404, the sign-in redirect and the functions'
+     region. It must report nothing WRONG.
+   - D4, by hand: attach a document, preview it, download it (signed
+     upload, CORS, download name).
+   - D5, by hand: open a document in the client viewer with the console
+     open: no Content Security Policy errors.
    - D3: then narrow `https://*.supabase.co` to the project's own address in
-     `lib/csp.js` and `vercel.json` (the `csp` check holds the two equal).
+     `lib/csp.js` and `vercel.json` (the `csp` check holds the two equal),
+     redeploy, and run the deploy check again: it names the one origin.
 5. **The domain**: point `proposals.texc.au` (or the chosen name) at Vercel.
+   Then `node scripts/deploy-check.mjs --url https://proposals.texc.au
+   --production`: the demo must be gone and D3 narrowed.
 6. **First accounts**: a Brand in Black address in `ACCOUNT_SUPERS` signs in,
    George asks for access from the sign-in page, and the super approves him
    as administrator under People. George then approves his own staff.
