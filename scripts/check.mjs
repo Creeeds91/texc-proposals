@@ -35,7 +35,7 @@
  * 2 a suite could not start at all · 3 nothing failed but something was NOT
  * CHECKED (no browser, no sibling checkout). A skip is "not checked", never "fine".
  */
-import { readFileSync, readdirSync, existsSync, statSync, mkdirSync, writeFileSync } from 'node:fs';
+import { readFileSync, readdirSync, existsSync, statSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { resolve, dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync, spawnSync, spawn } from 'node:child_process';
@@ -655,10 +655,12 @@ async function suiteLighthouse() {
   const dir = join(ROOT, 'demo-out', 'lighthouse');
   mkdirSync(dir, { recursive: true });
   const runs = [];
+  const repeated = [];
   for (let i = 0; i < 3; i += 1) {
     const out = join(dir, `demo-${i + 1}.json`);
+    rmSync(out, { force: true });
     // Asynchronously: the page Lighthouse measures is served by this very process.
-    const r = await new Promise((done) => {
+    const measure = () => new Promise((done) => {
       const child = spawn(process.execPath, [cli, `${ctx.base}/demo`, '--output=json', `--output-path=${out}`, '--quiet',
         '--chrome-flags=--headless=new --no-sandbox', '--only-categories=performance,accessibility,best-practices'],
       { env: { ...process.env, CHROME_PATH: chrome } });
@@ -667,7 +669,16 @@ async function suiteLighthouse() {
       const timer = setTimeout(() => child.kill('SIGKILL'), 180000);
       child.on('close', (status) => { clearTimeout(timer); done({ status, stderr }); });
     });
-    if (r.status !== 0 || !existsSync(out)) return { status: SKIP, detail: [`Lighthouse did not run: ${(r.stderr || '').split('\n').filter(Boolean).slice(-1)[0] || r.status}`] };
+    const lastLine = (r) => (r.stderr || '').split('\n').filter(Boolean).slice(-1)[0] || String(r.status);
+    let r = await measure();
+    // Lighthouse losing its own trace (NO_NAVSTART and the like, seen late in a
+    // full run) says nothing about the page: that run is measured once more,
+    // and said so. A second failure is NOT CHECKED; a low score is never repeated.
+    if ((r.status !== 0 || !existsSync(out)) && /Runtime error encountered/.test(r.stderr)) {
+      repeated.push(`run ${i + 1} repeated after: ${lastLine(r).replace(/^.*Runtime error encountered: /, '')}`);
+      r = await measure();
+    }
+    if (r.status !== 0 || !existsSync(out)) return { status: SKIP, detail: [`Lighthouse did not run: ${lastLine(r)}`, ...repeated] };
     const j = JSON.parse(readFileSync(out, 'utf8'));
     runs.push({ ...Object.fromEntries(Object.entries(j.categories).map(([k, v]) => [k, v.score])), cls: j.audits['cumulative-layout-shift'].numericValue, tbt: j.audits['total-blocking-time'].numericValue, lcp: j.audits['largest-contentful-paint'].numericValue });
   }
@@ -675,7 +686,7 @@ async function suiteLighthouse() {
   const score = { performance: mid('performance'), accessibility: mid('accessibility'), 'best-practices': mid('best-practices') };
   const fails = Object.entries(score).filter(([, v]) => v < 0.95).map(([k, v]) => `${k} ${Math.round(v * 100)} (needs 95)`);
   const line = `Lighthouse ${lighthouseVersion()}, phone profile, middle of three: performance ${Math.round(score.performance * 100)}, accessibility ${Math.round(score.accessibility * 100)}, best practices ${Math.round(score['best-practices'] * 100)}; LCP ${(mid('lcp') / 1000).toFixed(1)} s, blocking ${Math.round(mid('tbt'))} ms, layout shift ${mid('cls').toFixed(3)} (reports in demo-out/lighthouse/)`;
-  return fails.length ? { status: FAIL, detail: [line, ...fails] } : { status: PASS, detail: [line] };
+  return fails.length ? { status: FAIL, detail: [line, ...fails, ...repeated] } : { status: PASS, detail: [line, ...repeated] };
 }
 
 function confirmify(cfg) {

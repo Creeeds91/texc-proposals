@@ -858,11 +858,12 @@ async function phase7Stills() {
   const { ids } = await seeded(a);
   const settle = (p, ms = 300) => p.waitForTimeout(ms);
   const dash = async (p, query = '') => { await p.goto(`${a.url}/dashboard${query}`); await p.waitForSelector('.db-svg'); await settle(p); };
-  // Huon Pipeline was archived 80 days ago in the seed: move it past 90. Ridgeway (accepted) is archived long ago.
-  psql(a.sb.conn, `update public.texc_proposals set archived_at = now() - interval '120 days' where id = '${ids.huonville}'`);
-  psql(a.sb.conn, `update public.texc_proposals set archived_at = now() - interval '200 days', archived_by = 'office@example.com', archive_reason = 'Work completed' where id = '${ids.ridgeway}'`);
-
+  // In the seed, Sorell was archived 40 days ago and Huon Pipeline 120. Ridgeway
+  // (accepted) is filed away here, through the app, so its history says so.
   const { ctx, page } = await signedIn(1440, 900, 1);
+  await dash(page);
+  const filed = await page.evaluate(async (id) => (await fetch('/api/proposals', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'archive', id, reason: 'Work completed' }) })).status, ids.ridgeway);
+  if (filed !== 200) throw new Error(`archiving Ridgeway for the capture answered ${filed}`);
   await dash(page, `?open=${ids.sorell}`);
   await page.waitForSelector('.db-timeline');
   await settle(page);
