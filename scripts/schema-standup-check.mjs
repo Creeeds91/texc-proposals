@@ -347,6 +347,9 @@ export async function runSchemaProof({ log = () => {} } = {}) {
     ok('the archive finds a revision by its documents\' titles and codes, and by its proposal', arcByDoc.length === 1 && arcByCode.length === 1 && arcByClient.length === 1 && arcByNothing.length === 0
       && arcByDoc[0].documents[0].docCode === 'WC-77310' && arcByDoc[0].files[0].sha256 === sha('w'), [arcByDoc.length, arcByCode.length, arcByClient.length, arcByNothing.length]);
     ok('and never hands out a storage path', !JSON.stringify((await rpc('texc_archive', { p: {} })).json).includes('/attachments/'));
+    const docsText = q(`select docs_text from public.texc_proposal_revisions where proposal_id = '${arc}'`);
+    const docsWrite = await rest('PATCH', `texc_proposal_revisions?proposal_id=eq.${arc}`, { docs_text: 'something else' });
+    ok('what a revision\'s documents are called is generated from its published text, and cannot be written', docsText === '["workers compensation certificate"] ["wc-77310"]' && !docsWrite.ok, [docsText, docsWrite.status]);
     const arcNotSet = await rpc('texc_auto_archive', { p: {} });
     ok('with no keeping period set, nothing is archived automatically', arcNotSet.ok && arcNotSet.json.archived.length === 0 && arcNotSet.json.days === null, arcNotSet.text);
     await rest('POST', 'texc_settings?on_conflict=key', { key: 'retention', value: { archiveAfterDays: 30 }, updated_by: 'proof@example.com' }, 'return=minimal,resolution=merge-duplicates');

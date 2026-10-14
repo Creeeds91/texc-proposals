@@ -1082,7 +1082,10 @@ revision's own published text (what the client saw) with the fingerprints
 from its snapshot, never a storage path. A revision matches when its
 proposal matches the dashboard's search (`texc_search`: reference, project,
 client, site, services) or every word appears in its documents' titles and
-codes, so a drawing number finds the revision that sent that drawing. It
+codes (`docs_text`, a column generated from the published text, so it can
+never disagree with it), so a drawing number finds the revision that sent
+that drawing. The page of revisions is chosen first, on these cheap columns,
+and only the revisions returned have their published text read. It
 filters by the year it was sent (Hobart), service, region and one proposal.
 The page groups the rows by proposal, and shows practice proposals only
 when asked.
@@ -1126,6 +1129,10 @@ nothing, and its document buttons become links into the pack. A file whose
 bytes do not match is still packed — the pack is evidence either way — and
 the mismatch is named on screen, on the cover and in the manifest.
 
+A pack's history is read a page at a time, in a fixed order, so it is never
+cut short; past 50,000 rows the pack is refused rather than quietly
+incomplete.
+
 Only editors and administrators may take a pack, and the request is in the
 staff audit (`record_pack_requested`) before anything is handed over. The
 server sends the facts and published texts; each document is fetched through
@@ -1162,8 +1169,8 @@ with any acceptance is never archived by it.
 view, and the proposal to the Archive with its record pack; the staff top
 bar gains Archive.
 
-**Checks.** Schema proof 81 (the archive search, automatic archiving, and
-deletion only after the keeping period); `check.mjs archive` (who may see
+**Checks.** Schema proof 82 (the archive search and its generated column,
+automatic archiving, and deletion only after the keeping period); `check.mjs archive` (who may see
 what, search, a revision as sent and its documents, the pack built in
 Chromium and every fingerprint in the zip checked independently, a stored
 file altered after sending named as not matching, keeping periods, the daily

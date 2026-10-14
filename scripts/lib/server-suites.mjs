@@ -1595,7 +1595,12 @@ export async function suiteA11y() {
   if (!b) return { status: SKIP, detail: ['Playwright not found'] };
   const { psql } = await import('./local-supabase.mjs');
   const q = (sql) => psql(a.sb.conn, sql);
-  const staff = await checkStaff(a);
+  // Its own administrator, as the archive suite does: publishing is limited per account.
+  const email = `a11y-admin-${randomBytes(3).toString('hex')}@example.com`;
+  await client(a).call('POST', '/api/auth?action=code', { email });
+  await (await checkStaff(a)).call('POST', '/api/people', { email, status: 'active', role: 'admin' });
+  const staff = client(a);
+  await staff.signIn(email);
   if (q("select count(*) from public.texc_proposals where created_by = 'george@example.com'") === '0') {
     const { seedDashboard } = await import('../demo/dashboard-seed.mjs');
     seedDashboard(a.sb.conn);
@@ -1726,6 +1731,10 @@ export async function suiteArchive() {
     await people[role].signIn(email);
   }
   const { admin, editor, viewer } = people;
+  // Proposals are published by this suite's own administrator: publishing is
+  // limited per account (20 in 10 minutes), and the shared check account has
+  // spent much of that on the suites before this one.
+  const author = admin;
   const arc = (c, body) => c.call('POST', '/api/archive', body);
   const audited = (action, proposalId) => q(`select count(*) from public.texc_staff_audit where action = '${action}'${proposalId ? ` and proposal_id = '${proposalId}'` : ''}`) !== '0';
 
@@ -1739,12 +1748,12 @@ export async function suiteArchive() {
   expect((await viewer.call('POST', '/api/archive', { action: 'search' }, { origin: 'https://elsewhere.example' })).status === 403, 'the archive answered a cross-site request');
 
   // 2. A proposal sent twice — Rev B replaces one document's file — and accepted on Rev B.
-  const p = await demoProposal(staff);
+  const p = await demoProposal(author);
   const { checkContext } = await import('../../lib/proposals.js');
-  const dr = (await staff.call('GET', `/api/drafts?id=${p.id}`)).json;
+  const dr = (await author.call('GET', `/api/drafts?id=${p.id}`)).json;
   const card = dr.config.attachments.find((c) => c.visibility === 'client');
   const revised = testPdf(`${card.title}, revised ${tag}`);
-  const up = await uploadPdf(staff, p.id, revised, `${card.id}-revised.pdf`);
+  const up = await uploadPdf(author, p.id, revised, `${card.id}-revised.pdf`);
   card.file = up.json.file.id;
   const coded = dr.config.attachments.filter((c) => c.visibility === 'client')[1];
   const docCode = `DWG-${tag.toUpperCase()}`;
@@ -1752,8 +1761,8 @@ export async function suiteArchive() {
   const originalTitle = dr.config.meta.project;
   dr.config.meta.project = `${originalTitle} (revised)`;
   const acks = runChecks(dr.config, checkContext()).acks.map((x) => x.key);
-  const putB = await staff.call('PUT', '/api/drafts', { id: p.id, version: dr.version, config: { ...dr.config, acks } });
-  const pubB = await staff.call('POST', '/api/proposals', { action: 'publish', id: p.id, version: putB.json.version });
+  const putB = await author.call('PUT', '/api/drafts', { id: p.id, version: dr.version, config: { ...dr.config, acks } });
+  const pubB = await author.call('POST', '/api/proposals', { action: 'publish', id: p.id, version: putB.json.version });
   expect(pubB.status === 200, `publishing Rev B answered ${pubB.status} ${pubB.text.slice(0, 160)}`);
   const revs = JSON.parse(q(`select json_agg(json_build_object('id', id, 'rev', rev_label, 'sha', plaintext_sha256, 'vt', published_text::jsonb->>'__vt', 'snap', attachments_snapshot) order by rev_index)::text from public.texc_proposal_revisions where proposal_id = '${p.id}'`));
   const [A, B] = revs;
@@ -1826,7 +1835,7 @@ export async function suiteArchive() {
   expect(set.status === 200 && set.json.retention.archiveAfterDays === 30 && set.json.retention.keepAcceptedYears === null && audited('retention_changed'), `setting the keeping periods: ${set.status} ${set.text.slice(0, 120)}`);
 
   // 7. The daily run: refused without the secret; archives what ran out unaccepted, never what was accepted.
-  const expired = await demoProposal(staff);
+  const expired = await demoProposal(author);
   q(`begin; set local session_replication_role = replica;
      update public.texc_proposals set valid_until = current_date - 60, updated_at = now() - interval '60 days' where id in ('${expired.id}', '${p.id}');
      commit;`);

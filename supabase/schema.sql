@@ -909,11 +909,21 @@ $$;
 
 -- ---------------------------------------------------------------- archive and retention (Phase 9)
 
+-- What a revision's documents are called and coded, as its published text
+-- names them, for the archive's search. Generated from the text, so it can
+-- never disagree with it; COPY and a restore by column name skip it.
+alter table public.texc_proposal_revisions add column if not exists docs_text text generated always as (
+  lower(coalesce(jsonb_path_query_array(published_text::jsonb, '$.attachments[*].title')::text, '') || ' '
+    || coalesce(jsonb_path_query_array(published_text::jsonb, '$.attachments[*].docCode')::text, ''))
+) stored;
+
 -- The archive: one row per revision ever published, newest first, with its
 -- proposal, its acceptance and the documents it offered (from the published
 -- text, the client's own view, and its snapshot's fingerprints; never a
 -- storage path). A revision matches when its proposal matches the dashboard's
--- search, or every word appears in the titles and codes of its documents.
+-- search, or every word appears in the titles and codes of its documents
+-- (docs_text). The revisions are chosen first, on cheap columns, so only the
+-- page returned has its published text read.
 create or replace function public.texc_archive(p jsonb)
 returns jsonb language plpgsql stable security definer set search_path = '' as $$
 declare
@@ -938,19 +948,21 @@ begin
         from jsonb_array_elements(case when jsonb_typeof(r.attachments_snapshot) = 'array' then r.attachments_snapshot else '[]'::jsonb end) x) as files,
       (select jsonb_build_object('id', a.id, 'name', a.name, 'company', a.company, 'accepted_at', a.accepted_at, 'kind', a.kind)
         from public.texc_acceptances a where a.revision_id = r.id) as acceptance
-    from public.texc_proposal_revisions r
+    from (
+      select r0.id from public.texc_proposal_revisions r0
+      join public.texc_proposals p0 on p0.id = r0.proposal_id
+      where (words is null
+          or p0.id = any(coalesce(hits, '{}'))
+          or not exists (select 1 from unnest(words) w where strpos(coalesce(r0.docs_text, ''), w) = 0))
+        and (yr is null or extract(year from r0.published_at at time zone 'Australia/Hobart') = yr)
+        and (coalesce(p->>'service', '') = '' or p0.services @> array[p->>'service'])
+        and (coalesce(p->>'region', '') = '' or p0.site_region = p->>'region')
+        and (coalesce(p->>'proposal', '') = '' or p0.id::text = p->>'proposal')
+      order by r0.published_at desc
+      limit greatest(1, least(coalesce((p->>'limit')::integer, 300), 2000))
+    ) pick
+    join public.texc_proposal_revisions r on r.id = pick.id
     join public.texc_proposals pr on pr.id = r.proposal_id
-    where (words is null
-        or pr.id = any(coalesce(hits, '{}'))
-        or not exists (select 1 from unnest(words) w where strpos(lower(coalesce((
-              select string_agg(coalesce(a->>'title', '') || ' ' || coalesce(a->>'docCode', ''), ' ')
-              from jsonb_array_elements(coalesce(r.published_text::jsonb -> 'attachments', '[]'::jsonb)) a), '')), w) = 0))
-      and (yr is null or extract(year from r.published_at at time zone 'Australia/Hobart') = yr)
-      and (coalesce(p->>'service', '') = '' or pr.services @> array[p->>'service'])
-      and (coalesce(p->>'region', '') = '' or pr.site_region = p->>'region')
-      and (coalesce(p->>'proposal', '') = '' or pr.id::text = p->>'proposal')
-    order by r.published_at desc
-    limit greatest(1, least(coalesce((p->>'limit')::integer, 300), 2000))
   ) o), '[]'::jsonb);
 end $$;
 
