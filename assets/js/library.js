@@ -337,7 +337,7 @@ function factsForm(item) {
   h('div', { class: 'lib-form-grid' },
     sel('lib-f-owner', 'Whose', [['org', `${BRAND.legalName || BRAND.name} (the company)`], ...state.people.map((p) => [p.slug, `${p.name} (personal)`])], owner),
     sel('lib-f-kind', 'Kind', state.kinds, editing ? item.kind : 'insurance'),
-    txt('lib-f-title', 'Title', editing ? item.title : '', { maxlength: '160', required: true }),
+    h('div', { class: 'lib-wide' }, txt('lib-f-title', 'Title', editing ? item.title : '', { maxlength: '160', required: true })),
     txt('lib-f-issuer', 'Issued by', editing ? item.issuer : '', { maxlength: '160' }),
     txt('lib-f-number', 'Number (licence, policy)', editing ? item.number : '', { maxlength: '80' }),
     txt('lib-f-code', 'Document code', editing ? item.docCode : '', { maxlength: '60' }),

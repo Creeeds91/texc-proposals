@@ -19,7 +19,9 @@ Built by Brand in Black. Plan: `docs/architecture.md`. What still needs TEXC:
 | 4 | PDF attachments: upload, check, release, viewer, download | Built 13 Oct 2026 |
 | 5 | Online acceptance: signature, record, re-acceptance, request changes | Built 13 Oct 2026 |
 | 6 | Archive and dashboard: figures, chart, follow-ups, search, history, archive and restore, CSV | Built 13 Oct 2026 |
-| 7 | Hardening and handover: deleting for good, security reviews, accessibility, speed, guide, go-live runbook | **This build** |
+| 7 | Hardening and handover: deleting for good, security reviews, accessibility, speed, guide, go-live runbook | Built 14 Oct 2026 |
+| 8 | Documents: a library of standing documents offered on any proposal, expiry watched; several PDFs at once | **This build** |
+| 9 | Archive: a browser across every proposal, revision and document; a record pack per proposal; retention | Approved, next |
 
 Going live: `docs/handover.md`. For TEXC's staff: `docs/editor-guide.md`.
 
@@ -112,6 +114,17 @@ Administrators can mark a practice proposal so it never counts.
 `scripts/demo/dashboard-seed.mjs` fills a local database with a year of
 fictional proposals for the captures and the `dashboard` check.
 
+## The document library
+
+`/documents`, for every staff role to see; administrators change it.
+Standing documents (certificates of currency, licences, procedures, SWMS),
+the company's and each person's, uploaded once, checked like any file,
+approved with the facts printed on them, and offered on any proposal with
+**Choose from the library**. Publishing sends a document's current approved
+file; a renewal goes out with the next revision, never into one already
+sent. What has lapsed or soon will is flagged on the page, in the checklist
+and on the dashboard. `docs/architecture.md` §19.
+
 ## The client's side
 
 A client opens `/p/<slug>?t=<token>` and types the passphrase. The proposal is
@@ -177,6 +190,7 @@ lib/acceptance-record.js  the stored acceptance record page and its CSP
 assets/js/acceptance.js   acceptance wording and rules, shared by page and server
 assets/js/signature.js    the signature pad (loaded on demand)
 templates/dashboard.html  the staff dashboard; assets/js/dashboard.js, assets/css/dashboard.css
+templates/library.html    the Documents page; assets/js/library.js, assets/css/library.css; lib/library.js, api/library.js
 assets/js/lifecycle.js    states, follow-ups, periods and figures, shared by dashboard and export
 lib/overview.js           the dashboard's reads; lib/report.js the CSV
 lib/purge.js              deleting an archived proposal for good (Brand in Black only)

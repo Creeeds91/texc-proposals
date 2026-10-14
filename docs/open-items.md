@@ -42,6 +42,8 @@ answered, and say where the answer came from.
 | C33 | Chalmers Lane–derived wording approved for other clients | Beardwood-specific source | Demo, and every Chalmers preset in the editor library (each insert must be acknowledged) |
 | C35 | 000 emergency line, adapted "This website" → "This proposal" | `pages.ts contact.emergency` | Section 18 |
 | C37 | Preliminary status line adapted "This document" → "This proposal" | Chalmers Lane callout | Section 18 and the callout in 05 |
+| C40 | The standing documents themselves for the library: certificates of currency, licences, company procedures and SWMS, each with the facts printed on it (issuer, number, revision, dates, expiry). And who at TEXC checks a certificate before it is approved | George's 12 Oct 2026 email names the kinds; none are supplied to this system yet | The Documents page |
+| C41 | What George's prefix "SSDS" stands for. The library shows it as he writes it and does not expand it | George's filenames (texc repo, `documents/process/app-direction.md`) | Library kind |
 
 ## Decisions and set-up — Brand in Black
 
@@ -63,8 +65,17 @@ answered, and say where the answer came from.
 | Q7 | Online acceptance before T&Cs; signature type; adviser wording | Built as recommended: acceptance works without T&Cs (the sentence leaves terms out), drawn or typed signature (per proposal). **The adviser's wording (C25) is still needed before the first live proposal** |
 | C38 | Wording drafted by Brand in Black for acceptance, not yet approved by TEXC: "Planning and site preparation can begin once this is accepted", "Hold point HP1 is met", the request-changes form, the acceptance and changes emails, and the acceptance record's headings | Open — TEXC to approve before the first live proposal |
 | C39 | Dashboard defaults chosen by Brand in Black: follow-up after 5 days unopened, 3 days quiet, 7 days before valid-until; the archive reasons offered (did not go ahead, awarded to another contractor, work completed, duplicate or sent in error, practice or test, something else); the financial year as the default period | Open — George to confirm or change (each is one line in `assets/js/lifecycle.js` or `assets/js/dashboard.js`) |
+| C42 | Library defaults chosen by Brand in Black: a document is flagged 60 days before it lapses; a proposal is followed up 14 days before a document it sent lapses; only administrators change the library | Open — George to confirm or change (one line each in `assets/js/library-view.js`, `assets/js/lifecycle.js`) |
+| Q16 | Filing a converted document (texc repo, `documents/converter/`) straight into the library, rather than downloading its typeset copy and uploading it | Not built. Today the typeset copy is attached like any PDF (it passes the check); connecting the two tools is a later decision, as both may move into the TEXC app |
 | Q6 | Malware scanning | Option A built (staff-only uploads plus the structural check). Option B (ClamAV in Sydney) only if clients ever upload |
 | Q4–Q15 | See `docs/architecture.md` §10. Recommendations were approved with the plan | Approved as recommended |
+
+## Phase 8 notes
+
+- **A document library** (`/documents`): standing documents uploaded once and offered on any proposal, the company's and each person's, on the TEXC app plan's own evidence model so it can move into that app. An administrator uploads, approves (with the facts printed on the document) and retires; an approved file never changes and a revision keeps the one it sent. `docs/architecture.md` §19.
+- **Expiry is watched**: an expired library document stops publishing; one that lapses before the valid-until date must be acknowledged; the Documents page lists what lapses within 60 days; the dashboard follows up a proposal whose sent certificate lapses within 14.
+- **Quicker attaching**: several PDFs at once, or one dropped on its card. A file dropped in the editor could previously move a section; it no longer can.
+- **Generating project documents was dropped** in favour of TEXC's converter (texc repo, `documents/converter/`): its typeset copies pass this system's check and attach as they are (Q16).
 
 ## Phase 7 notes
 

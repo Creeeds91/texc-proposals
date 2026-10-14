@@ -29,6 +29,7 @@ import { CLIENT_CSP, EDITOR_CSP, WORKER_CSP } from '../lib/csp.js';
 import { SESSION_COOKIE } from '../lib/accounts.js';
 import { SIGNIN_HTML } from '../lib/signin-html.js';
 import { DASHBOARD_HTML } from '../lib/dashboard-html.js';
+import { LIBRARY_HTML } from '../lib/library-html.js';
 import { EDITOR_HTML } from '../lib/editor-html.js';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -194,11 +195,11 @@ export async function runDeployCheck({ url, production = false, bypass = '', ses
     const before = wrong.length;
     if (signin.status !== 200) wrong.push(`/signin answered ${signin.status}`);
     else { same('the sign-in page', signin, Buffer.from(SIGNIN_HTML)); policy('the sign-in page', signin, CLIENT_CSP); sharedHeaders('the sign-in page', signin); }
-    for (const [path, next] of [['/dashboard', '%2Fdashboard'], ['/editor', '%2Feditor']]) {
+    for (const [path, next] of [['/dashboard', '%2Fdashboard'], ['/documents', '%2Fdocuments'], ['/editor', '%2Feditor']]) {
       const r = await get(path, { manual: true });
       if (r.status !== 302 || r.h('location') !== `/signin?next=${next}`) wrong.push(`${path} without a session answered ${r.status} ${r.h('location') || ''}, not a redirect to sign in`);
     }
-    if (wrong.length === before) held.push('the sign-in page is this checkout\'s; the dashboard and editor send a stranger to it');
+    if (wrong.length === before) held.push('the sign-in page is this checkout\'s; the dashboard, the Documents page and the editor send a stranger to it');
   }
 
   // 8. The functions are there and running, and refuse the wrong method before any database work.
@@ -221,17 +222,18 @@ export async function runDeployCheck({ url, production = false, bypass = '', ses
   if (session) {
     const cookie = `${SESSION_COOKIE}=${session}`;
     const dash = await get('/dashboard', { cookie, manual: true });
+    const docs = await get('/documents', { cookie, manual: true });
     const ed = await get('/editor', { cookie, manual: true });
-    if (dash.status === 302 || ed.status === 302) notChecked.push('the editor and dashboard: the session given was not accepted (signed out, expired, or not an editor)');
+    if (dash.status === 302 || docs.status === 302 || ed.status === 302) notChecked.push('the editor and dashboard: the session given was not accepted (signed out, expired, or not an editor)');
     else {
       const before = wrong.length;
-      for (const [label, r, bytes, expected] of [['the dashboard', dash, DASHBOARD_HTML, CLIENT_CSP], ['the editor', ed, EDITOR_HTML, EDITOR_CSP]]) {
+      for (const [label, r, bytes, expected] of [['the dashboard', dash, DASHBOARD_HTML, CLIENT_CSP], ['the Documents page', docs, LIBRARY_HTML, CLIENT_CSP], ['the editor', ed, EDITOR_HTML, EDITOR_CSP]]) {
         if (r.status !== 200) { wrong.push(`${label} answered ${r.status} with a session`); continue; }
         same(label, r, Buffer.from(bytes));
         policy(label, r, expected);
         sharedHeaders(label, r);
       }
-      if (wrong.length === before) held.push('signed in, the dashboard and the editor are this checkout\'s, each under its own policy alone (the editor\'s adds blob: previews)');
+      if (wrong.length === before) held.push('signed in, the dashboard, the Documents page and the editor are this checkout\'s, each under its own policy alone (the editor\'s adds blob: previews)');
     }
   } else notChecked.push('the editor and dashboard pages (give STAFF_SESSION, a signed-in session, to check their policies and bytes)');
 

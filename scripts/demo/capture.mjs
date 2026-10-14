@@ -903,6 +903,204 @@ async function phase7Stills() {
   return readdirSync(dir).length;
 }
 
+/**
+ * Phase 8, staff side first: the Documents page with a FICTIONAL library (a
+ * made-up insurer and numbers; TEXC's own document titles), one document with
+ * a renewal waiting, adding one; the editor offering a library document, the
+ * chooser, several PDFs at once and the checklist asking about a certificate
+ * that lapses before the valid-until date; then the client's documents and
+ * the dashboard following the lapse up. Before: the editor's Documents panel
+ * and the phone's top bar as Phase 4 and 6 left them.
+ */
+async function phase8Stills() {
+  const dir = resolve(OUT, 'phase8');
+  rmSync(dir, { recursive: true, force: true });
+  mkdirSync(dir, { recursive: true });
+  const shot = (page, name, opts = {}) => page.screenshot({ path: resolve(dir, name), ...opts });
+  const settle = (p, ms = 300) => p.waitForTimeout(ms);
+  for (const [from, to] of [['phase4/1440-04-documents-ready.png', 'before-1440-editor-documents.png'], ['phase6/390-01-dashboard.png', 'before-390-dashboard-top.png']]) {
+    if (existsSync(resolve(OUT, from))) copyFileSync(resolve(OUT, from), resolve(dir, to));
+  }
+  const { textPdf } = await import('../lib/pdf-fixtures.mjs');
+  const pdfOf = (title, pages = 1) => [...textPdf([title, 'A fictional document for the Phase 8 screenshots.'], { pages })];
+  const day = (n) => new Date(Date.now() + n * 86400000).toISOString().slice(0, 10);
+
+  let { ctx, page, a } = await signedIn(1440, 900, 1);
+  // The library, through the real API, as an administrator would build it.
+  const lib = await page.evaluate(async ([docs]) => {
+    const post = async (b) => (await fetch('/api/library', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) })).json();
+    const up = async (id, bytes, name) => {
+      const buf = new Uint8Array(bytes);
+      const sha = [...new Uint8Array(await crypto.subtle.digest('SHA-256', buf))].map((x) => x.toString(16).padStart(2, '0')).join('');
+      const b = await post({ action: 'begin', id, name, bytes: buf.length, sha256: sha });
+      if (b.uploadUrl) await fetch(b.uploadUrl, { method: 'PUT', headers: { 'Content-Type': 'application/pdf' }, body: buf });
+      const v = await post({ action: 'verify', id, name, sha256: sha });
+      return v.item.versions.find((x) => x.name === name);
+    };
+    const ids = {};
+    for (const d of docs) {
+      const { item } = await post({ action: 'create', ...d.facts });
+      ids[d.key] = item.id;
+      for (const f of d.files) {
+        const v = await up(item.id, f.bytes, f.name);
+        if (f.approve) await post({ action: 'approve', id: item.id, version: v.id, ...f.approve });
+      }
+    }
+    return ids;
+  }, [[
+    { key: 'pl', facts: { ownerKind: 'organisation', kind: 'insurance', title: 'Public liability certificate of currency', issuer: 'Example Mutual Insurance', number: 'PL-204118', currency: 'expires' },
+      files: [{ name: 'Certificate-of-currency-PL-2025.pdf', bytes: pdfOf('Public liability certificate of currency 2025-26'), approve: { docRev: '2025-26', issuedOn: day(-355), expiresOn: day(10) } },
+        { name: 'Certificate-of-currency-PL-2026.pdf', bytes: pdfOf('Public liability certificate of currency 2026-27') }] },
+    { key: 'wc', facts: { ownerKind: 'organisation', kind: 'insurance', title: 'Workers compensation certificate of currency', issuer: 'Example Mutual Insurance', number: 'WC-77310', currency: 'expires' },
+      files: [{ name: 'Certificate-of-currency-WC.pdf', bytes: pdfOf('Workers compensation certificate of currency'), approve: { docRev: '2026-27', issuedOn: day(-30), expiresOn: day(335) } }] },
+    { key: 'swms', facts: { ownerKind: 'organisation', kind: 'procedure', title: 'Master SWMS', currency: 'permanent' },
+      files: [{ name: 'Master-SWMS.pdf', bytes: pdfOf('Master SWMS', 4), approve: { docRev: '1', docDate: day(-40) } }] },
+    { key: 'transport', facts: { ownerKind: 'organisation', kind: 'procedure', title: 'Explosives Transport Procedure', currency: 'permanent' },
+      files: [{ name: 'Explosives-Transport-Procedure.pdf', bytes: pdfOf('Explosives Transport Procedure', 3), approve: { docRev: '0', docDate: day(-2) } }] },
+    { key: 'erp', facts: { ownerKind: 'organisation', kind: 'procedure', title: 'Emergency & Incident Response Plan', currency: 'permanent' },
+      files: [{ name: 'Emergency-and-Incident-Response-Plan.pdf', bytes: pdfOf('Emergency & Incident Response Plan', 2) }] },
+    { key: 'licence', facts: { ownerKind: 'person', ownerRef: 'george-scott', kind: 'compliance', title: 'Shotfiring licence', currency: 'expires' },
+      files: [{ name: 'Shotfiring-licence.pdf', bytes: pdfOf('Shotfiring licence'), approve: { docRev: '', issuedOn: day(-300), expiresOn: day(430) } }] },
+  ]]);
+
+  const docs = async (p, query = '') => { await p.goto(`${a.url}/documents${query}`); await p.waitForSelector('.lib-item'); await p.mouse.move(1, 1); await settle(p); };
+  await docs(page);
+  await shot(page, '1440-01-documents.png');
+  await shot(page, '1440-02-documents-full.png', { fullPage: true });
+  await docs(page, `?open=${lib.pl}`);
+  await page.waitForSelector('.lib-approve');
+  await settle(page);
+  await shot(page, '1440-03-a-renewal-waiting.png');
+  // The renewal's facts, as printed on the fictional certificate.
+  const approveInputs = page.locator('.lib-approve input');
+  await approveInputs.nth(0).fill('2026-27');
+  await approveInputs.nth(2).fill(day(-4));
+  await approveInputs.nth(3).fill(day(375));
+  await approveInputs.nth(3).blur();
+  await page.evaluate(() => { const b = document.querySelector('#db-panel'); b.scrollTop = b.scrollHeight; });
+  await settle(page, 150);
+  await shot(page, '1440-04-approve-the-renewal.png');
+  await docs(page);
+  await page.click('#lib-add');
+  await page.fill('#lib-f-title', 'Blast Communication & Exclusion Control Procedure');
+  await page.selectOption('#lib-f-kind', 'procedure');
+  await page.selectOption('#lib-f-currency', 'permanent');
+  await page.locator('#lib-f-title').blur();
+  await settle(page);
+  await shot(page, '1440-05-add-a-document.png');
+  await page.click('#db-panel .db-close');
+
+  // The editor: a proposal offering library documents, beside its own.
+  const id = await openDemo(page, a);
+  await page.evaluate(([pl, swms]) => {
+    const ed = window.__editor;
+    const list = (ed.state.cfg.attachments || []).filter((c) => c.visibility === 'on-request' || c.file);
+    ed.ctx.set('attachments', [
+      { id: 'lib-pl', title: 'Public liability certificate of currency', category: 'certificates', visibility: 'client', evidence: pl },
+      { id: 'lib-swms', title: 'Master SWMS', category: 'risk', visibility: 'client', evidence: swms },
+      ...list], { structural: true });
+    ed.ctx.set('meta.validUntil', new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10), { structural: true });
+  }, [lib.pl, lib.swms]);
+  await page.waitForFunction(() => document.querySelector('.ed-panel[data-sec="attachments"]'));
+  await focusPanel(page, 'attachments', { inner: '[data-path="attachments.0.evidence"]', drawerOffset: 250 });
+  await page.waitForSelector('[data-path="attachments.0.evidence"] .ed-attach-verdict');
+  await focusPanel(page, 'attachments', { inner: '[data-path="attachments.0.evidence"]', drawerOffset: 250 });
+  await shot(page, '1440-06-editor-library-card.png');
+  await page.evaluate(() => { window.__editor.ctx.set('attachments', [...window.__editor.state.cfg.attachments, { id: 'new1', category: 'project', visibility: 'client' }], { structural: true }); });
+  const last = await page.evaluate(() => window.__editor.state.cfg.attachments.length - 1);
+  await focusPanel(page, 'attachments', { inner: `[data-path="attachments.${last}.file"]`, drawerOffset: 200 });
+  await page.click(`[data-path="attachments.${last}.file"] button:has-text("Choose from the library")`);
+  await page.waitForSelector('.ed-libpick-item');
+  await settle(page, 400);
+  await shot(page, '1440-07-choose-from-the-library.png');
+  await page.click('.ed-libpick-item:has-text("Workers compensation")');
+  await settle(page);
+  await page.setInputFiles('.ed-drop input[type=file]', [
+    { name: 'Stage-3-blast-design-overview.pdf', mimeType: 'application/pdf', buffer: Buffer.from(pdfOf('Stage 3 blast design overview', 2)) },
+    { name: 'Vibration_monitoring_locations.pdf', mimeType: 'application/pdf', buffer: Buffer.from(pdfOf('Vibration monitoring locations')) }]);
+  await page.waitForFunction(() => window.__editor.state.cfg.attachments.filter((c) => /Stage 3|Vibration/.test(c.title || '')).every((c) => c.file) && window.__editor.state.cfg.attachments.some((c) => /Vibration/.test(c.title || '')), null, { timeout: 30000 });
+  await focusPanel(page, 'attachments', { inner: '.ed-drop', drawerOffset: 40 });
+  await shot(page, '1440-08-several-pdfs-at-once.png');
+  await page.click('#ed-check');
+  await page.waitForSelector('dialog .ed-verdict');
+  await page.evaluate(() => { const ack = [...document.querySelectorAll('dialog .ed-ack')].find((x) => /expires on/.test(x.textContent)); if (ack) ack.scrollIntoView({ block: 'center' }); });
+  await settle(page, 300);
+  await shot(page, '1440-09-checklist-lapses-before-valid-until.png');
+  for (const box of await page.$$('dialog .ed-ack input')) await box.check();
+  await page.click('#ck-publish');
+  await page.waitForSelector('dialog h2:has-text("Published")', { timeout: 30000 });
+  const [link, pass] = await page.$$eval('dialog .ed-secret code', (c) => c.map((x) => x.textContent));
+  await page.click('dialog .ed-dialog-head button');
+
+  // The dashboard follows the lapse up.
+  await page.goto(`${a.url}/dashboard?open=${id}`);
+  await page.waitForSelector('.db-timeline');
+  await settle(page);
+  await shot(page, '1440-10-dashboard-follow-up.png');
+  await ctx.close();
+
+  // A scroll through the Documents page.
+  ({ ctx, page, a } = await signedIn(1440, 900, 1));
+  const state = await ctx.storageState();
+  await ctx.close();
+  const vdir = resolve(OUT, 'video-tmp');
+  rmSync(vdir, { recursive: true, force: true });
+  const rctx = await browser.newContext({ ...AU, viewport: { width: 1440, height: 900 }, storageState: state, recordVideo: { dir: vdir, size: { width: 1440, height: 900 } } });
+  const rp = await rctx.newPage();
+  await docs(rp);
+  await rp.waitForTimeout(1200);
+  const total = await rp.evaluate(() => document.documentElement.scrollHeight - window.innerHeight);
+  for (let y = 0; y < total; y += 30) { await rp.evaluate((top) => window.scrollTo(0, top), y); await rp.waitForTimeout(64); }
+  await rp.waitForTimeout(1200);
+  await rctx.close();
+  const webm = readdirSync(vdir).find((f) => f.endsWith('.webm'));
+  renameSync(resolve(vdir, webm), resolve(dir, 'documents-scroll-1440.webm'));
+  rmSync(vdir, { recursive: true, force: true });
+  spawnSync('ffmpeg', ['-y', '-loglevel', 'error', '-i', resolve(dir, 'documents-scroll-1440.webm'), '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', resolve(dir, 'documents-scroll-1440.mp4')]);
+
+  // On a phone: the page, a document, the editor's library card.
+  const pctx = await browser.newContext({ ...AU, viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, reducedMotion: 'reduce', storageState: state });
+  const pp = await pctx.newPage();
+  pp.on('dialog', (d) => d.accept());
+  await docs(pp);
+  await shot(pp, '390-01-documents.png');
+  await docs(pp, `?open=${lib.pl}`);
+  await pp.waitForSelector('.lib-approve');
+  await settle(pp);
+  await shot(pp, '390-02-a-renewal-waiting.png');
+  await pp.goto(`${a.url}/editor/${id}`);
+  await pp.waitForFunction(() => window.__editor && window.__editor.state.filesLoaded, null, { timeout: 15000 });
+  await settle(pp, 800);
+  await focusPanel(pp, 'attachments', { inner: '[data-path="attachments.0.evidence"]', drawerOffset: 200 });
+  await shot(pp, '390-03-editor-library-card.png');
+  await pctx.close();
+
+  // The client: the certificate says until when.
+  for (const [width, height, scale, tag] of [[1440, 900, 1, '1440'], [390, 844, 2, '390']]) {
+    const c = await browser.newContext({ ...AU, viewport: { width, height }, deviceScaleFactor: scale, reducedMotion: 'reduce' });
+    const p = await c.newPage();
+    await p.goto(link);
+    await p.fill('#gate-pass', pass);
+    await p.click('#gate-go');
+    await p.waitForFunction(() => document.documentElement.classList.contains('ready'), null, { timeout: 15000 });
+    // Sections above are drawn as they come into view (content-visibility), so the first scroll lands on
+    // estimated heights: scroll, let them draw, then scroll again to where the section really is.
+    // On a phone, straight to the certificates: that is what this picture is of.
+    for (let i = 0; i < 3; i += 1) {
+      await p.evaluate((phone) => {
+        document.documentElement.style.scrollBehavior = 'auto';
+        const s = phone ? [...document.querySelectorAll('#attachments .att-group')].find((g) => /Certificates/i.test(g.textContent)) : document.getElementById('attachments');
+        window.scrollTo(0, s.getBoundingClientRect().top + window.scrollY - (phone ? 88 : 64));
+      }, tag === '390');
+      await p.waitForTimeout(500);
+    }
+    await p.mouse.move(1, 1);
+    await p.screenshot({ path: resolve(dir, `${tag}-11-client-documents.png`) });
+    await c.close();
+  }
+  return readdirSync(dir).length;
+}
+
 async function pdf() {
   const page = await browser.newPage({ ...AU, viewport: { width: 1200, height: 900 }, reducedMotion: 'reduce' });
   await ready(page);
@@ -922,6 +1120,7 @@ try {
     ['--phase5', 'phase5/', phase5Stills, 'captures'],
     ['--phase6', 'phase6/', phase6Stills, 'files'],
     ['--phase7', 'phase7/', phase7Stills, 'captures'],
+    ['--phase8', 'phase8/', phase8Stills, 'files'],
   ].filter(([flag]) => process.argv.includes(flag));
   if (PARTS.length) {
     for (const [, dir, run, what] of PARTS) console.log(`demo-out/${dir}: ${await run()} ${what}`);
@@ -937,7 +1136,8 @@ try {
     const p5 = await phase5Stills();
     const p6 = await phase6Stills();
     const p7 = await phase7Stills();
-    console.log(`demo-out/: ${desk} sections at 1440, ${phone} at 390, arrival shots, two scroll videos, A4 PDF, ${e} editor, ${p3} Phase 3, ${p4} Phase 4, ${p5} Phase 5 captures, ${p6} Phase 6 files and ${p7} Phase 7 captures`);
+    const p8 = await phase8Stills();
+    console.log(`demo-out/: ${desk} sections at 1440, ${phone} at 390, arrival shots, two scroll videos, A4 PDF, ${e} editor, ${p3} Phase 3, ${p4} Phase 4, ${p5} Phase 5 captures, ${p6} Phase 6 files, ${p7} Phase 7 captures and ${p8} Phase 8 files`);
   }
 } finally {
   await browser.close();

@@ -17,6 +17,7 @@ online, and how to look after it. For Brand in Black and TEXC. The plan is
 | 5 | Online acceptance: signature, stored record, re-acceptance, requests for changes | §16 |
 | 6 | Dashboard and archive: figures, chart, follow-ups, search, history, CSV | §17 |
 | 7 | Hardening and handover: deleting for good, two security reviews, accessibility, speed, this document, the staff guide | §18 |
+| 8 | Documents: a library of standing documents (certificates, licences, procedures) offered on any proposal, with expiry watched; several PDFs at once | §19 |
 
 Nothing is deployed. Everything runs locally against a throwaway database
 (`node scripts/demo/local-app.mjs`), and every check passes there.
@@ -37,6 +38,7 @@ them, but a proposal should not go to a client until each is settled.
 | C28 | Who gets an account, and in which role | George as administrator; the rest as editors or viewers |
 | C26 | Whether TEXC's Basement Grotesque licence covers this site | Until then labels and body text use a system fallback |
 | C39 | Follow-up timings, archive reasons, default period | Defaults chosen by Brand in Black |
+| C40 | The standing documents for the library, and who checks a certificate before it is approved | The library starts empty |
 
 The full list, with sources, is `docs/open-items.md`.
 

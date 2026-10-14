@@ -43,6 +43,7 @@ they can see nothing.
 | Release a document the check did not pass | | | Yes |
 | Record an acceptance received by email or on paper | | | Yes |
 | Approve people; mark a proposal as practice | | | Yes |
+| Add to, approve and retire the document library | | | Yes |
 
 Brand in Black's accounts sit above these, for support. Only Brand in Black
 can delete a proposal permanently (section 12).
@@ -134,8 +135,10 @@ description for people who cannot see it. Use TEXC's own photographs only.
 
 ## 7. Documents (PDFs)
 
-Attach a PDF to each document card. Each file is checked for anything that
-could run on the client's computer (scripts, embedded files, launch actions).
+Attach a PDF to each document card, or drop several PDFs on the panel at
+once: each becomes a card, titled from its file name. A PDF dropped on a
+card attaches to it. Each file is checked for anything that could run on the
+client's computer (scripts, embedded files, launch actions).
 
 - **Passed the check**: ready to send.
 - **Refused by the check**: it carries active content. TEXC's own suite PDFs
@@ -151,6 +154,33 @@ Up to 20 documents per proposal, 25 MB each. **Preview** shows it exactly as
 the client will.
 
 ![Documents](guide/05-documents.webp)
+
+### The document library
+
+Some documents go with many proposals: certificates of currency, licences,
+the company's procedures and SWMS. Keep each once on the **Documents** page
+(in the bar at the top of the dashboard) rather than attaching it to every
+proposal.
+
+- An administrator adds a document: whose it is (the company, or a person),
+  what kind, its title, who issued it and its number. Then uploads its PDF,
+  gives the facts printed on it (revision, dates, expiry) and approves it.
+  It is checked like any other file.
+- On a proposal, use **Choose from the library** on a document card.
+  Publishing sends the library's current approved file, with its revision
+  and expiry ("Current to 30 June 2027").
+- When a certificate is renewed, upload the new one to the same document and
+  approve it. Proposals send it from their next revision; ones already sent
+  keep the one they sent.
+- **Needs attention** lists what has expired, what lapses within 60 days and
+  files waiting for approval. A proposal cannot be published with an expired
+  library document, and the checklist asks you to acknowledge one that lapses
+  before the proposal's valid-until date. The dashboard follows up a proposal
+  whose certificate is about to lapse.
+- A document no longer used is **retired**, not deleted: revisions that sent
+  it still open it.
+
+![The document library](guide/10-documents.webp)
 
 ## 8. Publishing
 

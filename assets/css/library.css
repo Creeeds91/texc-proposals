@@ -38,6 +38,8 @@
 .lib-form-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: var(--space-3); }
 .lib-form-grid input, .lib-form-grid select { min-height: 44px; }
 .lib-facts-form { display: grid; gap: var(--space-4); }
+.lib-wide { grid-column: 1 / -1; display: grid; }
+.lib-upload .db-note:empty { display: none; }
 .lib-upload { display: grid; gap: var(--space-2); justify-items: start; border: 1px dashed var(--steel-500); border-radius: var(--radius-md); padding: var(--space-4); margin: var(--space-4) 0; }
 .lib-upload.is-over { border-color: var(--doc-gold-text); background: var(--doc-band); }
 .lib-upload progress { width: 100%; }

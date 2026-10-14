@@ -283,9 +283,9 @@ export function panelFor(id, ctx) {
         columns: [
           { type: 'text', path: 'title', label: 'Title', confirm: false },
           { type: 'select', path: 'category', label: 'Group', options: CATEGORIES, noBlank: true, confirm: false },
-          { type: 'text', path: 'docCode', label: 'Document code', confirm: false, help: `Only a code ${ctx.BRAND.name} has allocated. Never invent one.` },
-          { type: 'text', path: 'docRev', label: 'Revision', confirm: false },
-          { type: 'date', path: 'docDate', label: 'Date', confirm: false },
+          { type: 'text', path: 'docCode', label: 'Document code', confirm: false, help: `Only a code ${ctx.BRAND.name} has allocated. Never invent one.` , when: (r) => !r.evidence },
+          { type: 'text', path: 'docRev', label: 'Revision', confirm: false , when: (r) => !r.evidence },
+          { type: 'date', path: 'docDate', label: 'Date', confirm: false , when: (r) => !r.evidence },
           { type: 'select', path: 'visibility', label: 'Who sees it', options: [['client', 'The client can open it'], ['on-request', 'Listed as available on request']], noBlank: true, confirm: false },
         ] },
     ];

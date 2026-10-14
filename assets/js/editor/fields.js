@@ -229,7 +229,7 @@ function rows(spec, ctx, path) {
             write(n);
             ctx.toast?.(`Deleted “${title}”`, () => write(list));
           } }, icon('trash-2')))));
-    for (const col of spec.columns) card.append(renderField({ ...col, path: [...rowPath, ...toPath(col.path)] }, ctx));
+    for (const col of spec.columns) if (!col.when || col.when(row)) card.append(renderField({ ...col, path: [...rowPath, ...toPath(col.path)] }, ctx));
     if (spec.extra) { const extra = spec.extra(row, i, ctx, rowPath); if (extra) card.append(extra); }
     box.append(card);
   });

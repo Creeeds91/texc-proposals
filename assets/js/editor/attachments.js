@@ -26,6 +26,8 @@ const files = new Map();
 let loaded = false;
 const library = { items: [], people: [], kinds: [], today: '', loaded: false };
 const PER_PROPOSAL = 20;
+/** The last batch of PDFs dropped at once, line by line: kept here because the drawer redraws as each card is saved. */
+const dropLog = [];
 
 /** The files on this proposal, from the server. */
 export async function loadFiles(proposalId) {
@@ -262,7 +264,7 @@ function libraryBox(ctx, row, rowPath) {
       h('p', { class: 'ed-attach-kicker', text: 'From the library' }),
       line(st.key === 'current' ? 'check-circle' : 'alert-triangle', `${item.title}: ${st.text}`),
       h('p', { class: 'ed-hint', text: [ownerName(item, library.people, ctx.BRAND.legalName || ctx.BRAND.name), kindName(item.kind), cur && cur.docRev ? `Rev ${cur.docRev}` : '', cur && cur.pages ? `${cur.pages} ${cur.pages === 1 ? 'page' : 'pages'}` : '', cur ? kb(cur.bytes) : ''].filter(Boolean).join(' · ') }),
-      h('p', { class: 'ed-hint', text: 'Publishing sends its current approved file, with the code, revision, date and expiry the library holds. A renewal approved in Documents goes out with the next revision; one already sent keeps its own.' }));
+      h('p', { class: 'ed-hint', text: 'Its code, revision, date and expiry come from the library. Publishing sends its current approved file; a renewal approved on the Documents page goes out with the next revision, and one already sent keeps its own.' }));
     if (cur) tools.append(h('button', { type: 'button', class: 'btn btn--secondary btn--sm', onclick: async () => {
       const viewer = await import('../pdf-viewer.js');
       viewer.openViewer({ title: row.title || item.title, meta: [cur.docRev ? `Rev ${cur.docRev}` : '', kb(cur.bytes)].filter(Boolean).join(' · '), link: (o) => libraryLink(item, o) });
@@ -296,8 +298,7 @@ function chooseFromLibrary(ctx, rowPath) {
         const cur = i.current;
         ctx.set(rowPath, { ...card, evidence: i.id, file: undefined, pages: cur.pages || undefined, bytes: cur.bytes || undefined,
           title: (card.title || '').trim() ? card.title : i.title,
-          category: card.category && card.category !== 'project' ? card.category : (GROUP_OF_KIND[i.kind] || 'other'),
-          docCode: i.docCode || undefined, docRev: cur.docRev || undefined, docDate: cur.docDate || undefined }, { structural: true });
+          category: card.category && card.category !== 'project' ? card.category : (GROUP_OF_KIND[i.kind] || 'other') }, { structural: true });
         dlg.close();
         ctx.toast(`“${i.title}” from the library.`);
       } },
@@ -327,7 +328,12 @@ function chooseFromLibrary(ctx, rowPath) {
 export function dropZone(ctx) {
   const pid = ctx.proposalId();
   const input = h('input', { type: 'file', accept: 'application/pdf,.pdf', multiple: true, class: 'ed-file', 'aria-label': 'Choose several PDFs' });
-  const progress = h('ul', { class: 'ed-drop-list', 'aria-live': 'polite' });
+  const progress = h('ul', { class: 'ed-drop-list', 'aria-live': 'polite' }, dropLog.map((x) => h('li', { dataset: { drop: x.id }, text: x.text })));
+  const say = (entry, text) => {
+    entry.text = text;
+    const li = document.querySelector(`.ed-drop-list [data-drop="${entry.id}"]`);
+    if (li) li.textContent = text;
+  };
   const zone = h('div', { class: 'ed-drop' },
     h('p', { class: 'ed-drop-text' }, icon('upload'), h('span', { text: 'Drop several PDFs here to add a document for each, or ' }),
       h('button', { type: 'button', class: 'ed-linkbtn', disabled: !pid, onclick: () => input.click() }, 'choose them'), h('span', { text: '.' })),
@@ -339,18 +345,18 @@ export function dropZone(ctx) {
     if (take.length < list.length) ctx.toast(`A proposal can carry up to ${PER_PROPOSAL} files; ${list.length - take.length} were left out.`);
     const stamp = Date.now().toString(36);
     const cards = take.map((f, i) => ({ id: `a${stamp}${i}`, category: 'project', visibility: 'client', title: pdfName(f).replace(/\.pdf$/i, '').replace(/[_-]+/g, ' ').trim() }));
+    dropLog.splice(0, dropLog.length, ...cards.map((c) => ({ id: c.id, text: `${c.title}: waiting…` })));
     ctx.set(['attachments'], [...(ctx.get(['attachments']) || []), ...cards], { structural: true });
     for (let i = 0; i < take.length; i += 1) {
-      const li = h('li', { text: `${cards[i].title}: waiting…` });
-      progress.append(li);
+      const entry = dropLog[i];
       try {
-        const got = await attachFile(pid, take[i], (text) => { li.textContent = `${cards[i].title}: ${text}`; });
+        const got = await attachFile(pid, take[i], (text) => say(entry, `${cards[i].title}: ${text}`));
         const now = ctx.get(['attachments']) || [];
         const at = now.findIndex((c) => c && c.id === cards[i].id);
+        say(entry, `${cards[i].title}: ${got.status === 'clean' ? 'attached, and it passed the check' : 'stored, but it did not pass the check'}`);
         if (at >= 0) ctx.set(['attachments', at], { ...now[at], file: got.id, pages: got.pages || undefined, bytes: got.bytes || undefined }, { structural: true });
-        li.textContent = `${cards[i].title}: ${got.status === 'clean' ? 'attached, and it passed the check' : 'stored, but it did not pass the check'}`;
       } catch (e) {
-        li.textContent = `${cards[i].title}: ${e.message || 'it could not be attached'}`;
+        say(entry, `${cards[i].title}: ${e.message || 'it could not be attached'}`);
       }
     }
     ctx.toast(`${take.length} ${take.length === 1 ? 'document' : 'documents'} added. Check each card's title and group.`);

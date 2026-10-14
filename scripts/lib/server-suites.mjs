@@ -1603,6 +1603,17 @@ export async function suiteA11y() {
   const live = await demoProposal(staff);
   const path = new URL(live.url).pathname + new URL(live.url).search;
   const story = q("select id from public.texc_proposals where created_by = 'george@example.com' and project like 'Highway cutting%' limit 1");
+  // A library document with an approved file and a renewal waiting, so its panel shows every part (Phase 8).
+  const libUp = async (id, bytes, name) => {
+    const sha = sha256(bytes);
+    const begin = await staff.call('POST', '/api/library', { action: 'begin', id, name, bytes: bytes.length, sha256: sha });
+    if (begin.json && begin.json.uploadUrl) await fetch(begin.json.uploadUrl, { method: 'PUT', headers: { 'content-type': 'application/pdf' }, body: bytes });
+    return staff.call('POST', '/api/library', { action: 'verify', id, name, sha256: sha });
+  };
+  const libItem = (await staff.call('POST', '/api/library', { action: 'create', ownerKind: 'organisation', kind: 'insurance', title: 'Public liability certificate of currency', issuer: 'Example Mutual Insurance', currency: 'expires' })).json.item;
+  const libV1 = (await libUp(libItem.id, testPdf('Certificate of currency, audited'), 'certificate-2026.pdf')).json.item.versions[0];
+  await staff.call('POST', '/api/library', { action: 'approve', id: libItem.id, version: libV1.id, docRev: '2026', expiresOn: q("select to_char((now() at time zone 'Australia/Hobart')::date + 30, 'YYYY-MM-DD')") });
+  await libUp(libItem.id, testPdf('Certificate of currency, renewed'), 'certificate-2027.pdf');
   const { ctx: sctx } = await signedInContext(a, b);
   const signedIn = await sctx.storageState();
   await sctx.close();
@@ -1617,6 +1628,8 @@ export async function suiteA11y() {
     { name: 'dashboard', url: '/dashboard', ready: '.db-svg', staff: true },
     { name: 'dashboard, history panel', url: `/dashboard?open=${story}`, ready: '.db-timeline', staff: true },
     { name: 'editor', url: `/editor/${live.id}`, ready: '#ed-panels .ed-panel', staff: true },
+    { name: 'documents', url: '/documents', ready: '.lib-item', staff: true },
+    { name: 'documents, one document', url: `/documents?open=${libItem.id}`, ready: '.lib-approve', staff: true },
   ];
   const found = [];
   let checked = 0;

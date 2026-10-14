@@ -993,3 +993,76 @@ in the gate's design, under the same strict CSP.
 
 **Handover.** `docs/handover.md` (go-live runbook, care, accepted limits)
 and `docs/editor-guide.md` (for TEXC's staff, with pictures; printable).
+
+## 19. Phase 8 as built (14 Oct 2026)
+
+Documents: a library of standing documents, and quicker ways to attach.
+Approved as a variation after Phase 7, with Phase 9 (the archive) to follow.
+
+**What changed from the proposal.** Generating project documents from a
+proposal was dropped. TEXC's converter (texc repo, `documents` branch,
+`documents/converter/`) already turns a prose PDF into the house style with
+the one shared renderer; a second renderer here would let the two drift.
+Its typeset copies pass this system's PDF check and attach like any other
+file. Its interactive copies carry a script on their photograph slots
+(`buttonImportIcon`) and are refused, as they should be: they are TEXC's
+editing copies, not the client's.
+
+**The model.** One table of library documents, `texc_evidence`, whose owner
+is the organisation or one person (named by the website team list's id), a
+`kind` from George's own filename prefixes (compliance, insurance,
+procedure, project, SSDS) and a `currency` (does not expire, expires on a
+date). It is the TEXC app plan's EvidenceItem (texc repo,
+`documents/process/app-foundation.md`), so the library can move into that
+app unchanged; the plan's package builder can draw on it. Each document's
+files are `texc_evidence_versions`: stored at
+`library/<document id>/<sha256>-<name>.pdf` in the attachments bucket,
+checked exactly as a proposal's files are (one function, `verifyStored`),
+then given their facts (revision, document date, issued, expires) and
+approved. The current file is the latest approved. An approved file never
+changes and is never deleted (a trigger refuses), because a revision that
+sent it points at its path; a document that ever had one is retired, never
+deleted. Nothing outside `proposals/<id>/` is touched by a purge.
+
+**Who.** Every staff role can see and preview the library. Only an
+administrator adds, uploads, approves, releases (with a reason), discards a
+file never approved, edits, retires or restores; each change is in the staff
+audit first, and a release or approval with no audit entry is not made.
+
+**Publishing.** A card offers either its own file or a library document
+(`evidence: <id>`). Publishing freezes the library document's current
+approved file into the revision's snapshot (`evidence`, `version`, `path`,
+`sha256`, `expiresOn`), and the client's card gets the library's code,
+revision, date and expiry ("Current to 30 June 2027"), never the card's own.
+So a renewal approved in the library goes out with the next revision; one
+already sent keeps opening its own file. The client's endpoint is unchanged:
+it serves only what the snapshot names.
+
+**The checklist** (`assets/js/checks.js`, shared by editor and server)
+blocks a card whose library document is gone, retired, has no approved file
+or has expired, and asks for an acknowledgement when it lapses before the
+proposal's valid-until date. The server refuses the same at publish. The
+dashboard follows up an open proposal whose sent document lapses within 14
+days, or already has (`docs_expire_on` in `texc_overview()`).
+
+**Quicker attaching.** Several PDFs dropped on the Documents panel (or
+chosen at once) become a card each, every one checked; one dropped on a
+card attaches to it. A file dropped in the drawer no longer reaches the
+panel reordering (it did, and moved a section; the editor check found it).
+On a library card the code, revision and date fields give way to the
+library's, and the preview shows the card as publishing will send it.
+
+**The Documents page** (`/documents`, `templates/library.html`,
+`assets/js/library.js`): what needs attention (expired, lapsing within 60
+days, waiting for approval, refused, no file), the library by owner with
+search and filters, and one document's current file, the file waiting to
+replace it, its earlier files and where it has been sent. The staff top bar
+is two rows on a phone, so all four pages fit.
+
+**Checks.** Schema proof 75 (nine for the library, including that a purge
+leaves it alone); `check.mjs library` (roles, the file check, approval,
+publishing a library document, a renewal, retiring, a lapsed certificate, a
+purge), shown to fail when "current" means the oldest approved file;
+`editor` (choosing from the library, several files, a drop on a card);
+`lifecycle` (the follow-up); `a11y` (the Documents page and its panel);
+`deploy` (`/documents`).

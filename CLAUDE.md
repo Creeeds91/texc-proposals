@@ -137,7 +137,7 @@ added later is appended with `alter table … add column`, never tidied into the
   a caller (`check.mjs conventions`). The secret key goes in the `apikey`
   header only.
 - Endpoints never read `content/` or `templates/` at run time; they import the
-  generated `lib/template-data.js`, `lib/editor-html.js`, `lib/signin-html.js`, `lib/dashboard-html.js`.
+  generated `lib/template-data.js`, `lib/editor-html.js`, `lib/signin-html.js`, `lib/dashboard-html.js`, `lib/library-html.js`.
 
 ## Attachments (Phase 4)
 
@@ -231,9 +231,30 @@ added later is appended with `alter table … add column`, never tidied into the
   deploy` runs it against the local app and against a careless server it must
   catch. Attaching and opening a document on a preview stays by hand (D4, D5).
 
+## Document library (Phase 8)
+
+`docs/architecture.md` §19 is the design. What must hold:
+
+- **One table, the TEXC app's EvidenceItem**: a document belongs to the
+  organisation or one person, with George's kinds. Keep it that shape, so it
+  can move into the TEXC app (texc repo, `documents/process/app-foundation.md`)
+  unchanged.
+- **An approved library file is a record**: never changed, never deleted (the
+  database refuses). A renewal is a new file; a document that had a file is
+  retired, not deleted. A purge never touches `library/`.
+- **Publishing freezes the CURRENT approved file into the revision**, with the
+  library's code, revision, date and expiry. Never let a card's own values, or
+  a later approval, change what a revision already sent.
+- **Every library file gets the same check as a proposal's** (one function,
+  `verifyStored`). Only an administrator changes the library, audited first.
+- Generating project documents belongs to the converter in the texc repo, not
+  here: never add a second house-style renderer.
+- After any change here run `check.mjs schema library editor lifecycle a11y`
+  and `node scripts/demo/capture.mjs --phase8`, and look at the captures.
+
 ## Generated files
 
-`views/*.html` (404 included), `lib/editor-html.js`, `lib/signin-html.js`, `lib/dashboard-html.js`,
+`views/*.html` (404 included), `lib/editor-html.js`, `lib/signin-html.js`, `lib/dashboard-html.js`, `lib/library-html.js`,
 `lib/template-data.js` and `lib/demo-fixture.js` are built by
 `node scripts/build.mjs`. Never hand-edit them. `public/` (what Vercel serves)
 is written by `--public` and is git-ignored. The build is deterministic: a
@@ -259,7 +280,7 @@ photo presented as a site it is not of.
 ```bash
 node scripts/build.mjs
 node scripts/check.mjs            # every suite; exit 3 = something NOT CHECKED
-node scripts/demo/capture.mjs     # stills at 1440 and 390, scroll videos, A4 PDF, editor and Phase 3–7 screens
+node scripts/demo/capture.mjs     # stills at 1440 and 390, scroll videos, A4 PDF, editor and Phase 3–8 screens
 ```
 
 A skip (exit 3) is "not checked", never "fine". Look at every capture before
