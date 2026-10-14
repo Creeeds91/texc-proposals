@@ -40,7 +40,7 @@ node scripts/deploy-check.mjs --url <address>   # a deployed copy, from outside 
 node scripts/demo/capture.mjs      # screenshots, scroll videos and A4 PDF into demo-out/ (--editor, --phase3 … --phase7 for one set or several)
 ```
 
-The local app needs Postgres 16 and Docker (the cloud container has both). Hosted Supabase runs Postgres 17: `TEXC_PG_IMAGE=postgres:17` in front of any command runs the same stack on the official 17 image in Docker instead (the schema proof and every database suite pass on both). It
+The local app needs Postgres 16 and Docker (the cloud container has both). Hosted Supabase runs Postgres 17: `LOCAL_PG_IMAGE=postgres:17` in front of any command runs the same stack on the official 17 image in Docker instead (the schema proof and every database suite pass on both). It
 runs the real `api/*` handlers in front of a real Postgres and the real
 PostgREST, with a file-backed stand-in for Storage, and starts from an empty
 database every time. Sign in as `studio@example.com`; the "emailed" code is at

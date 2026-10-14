@@ -5,7 +5,7 @@
  *   Postgres      a scratch cluster, with Supabase's roles (anon, authenticated,
  *                 service_role, authenticator) and Supabase's default grants, so
  *                 supabase/schema.sql is tested in the shape it really runs in.
- *                 The local Postgres 16 by default; TEXC_PG_IMAGE=postgres:17
+ *                 The local Postgres 16 by default; LOCAL_PG_IMAGE=postgres:17
  *                 runs the official image of another version in Docker instead
  *                 (hosted Supabase projects run 17)
  *   PostgREST     the real server Supabase puts in front of Postgres (Docker)
@@ -34,7 +34,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const PG_BIN = '/usr/lib/postgresql/16/bin';
 const POSTGREST_IMAGE = 'postgrest/postgrest:v12.2.3';
 // Another Postgres version, in Docker (e.g. postgres:17, as hosted Supabase runs).
-const PG_IMAGE = process.env.TEXC_PG_IMAGE || '';
+const PG_IMAGE = process.env.LOCAL_PG_IMAGE || '';
 
 const b64url = (buf) => Buffer.from(buf).toString('base64').replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_');
 export function signJwt(payload, secret) {
