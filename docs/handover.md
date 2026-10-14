@@ -46,7 +46,26 @@ The full list, with sources, is `docs/open-items.md`.
 
 ## 3. Putting it online
 
-Paid services need Jesse's approval before they are created (D2).
+Paid services need Jesse's approval before they are created (D2). Approved
+14 Oct 2026; where each step stands is in the table below, and the numbered
+steps after it are the full procedure.
+
+### Where it stands (14 Oct 2026)
+
+| Step | Who | State |
+|---|---|---|
+| Vercel project `texc-proposals` (team BRAND IN BLACK, functions in `syd1`, toolbar off, Vercel sign-in on everything but a custom domain) | Claude | Done. Linked to `Creeeds91/texc-proposals`; production branch `main` |
+| Plain variables: `ACCOUNT_DOMAINS`, `MAIL_FROM` (Production and Preview), `PUBLIC_BASE_URL` (Production), `DEMO_PUBLIC=1` (Preview) | Claude | Done |
+| First deployment, built from the feature branch | Claude | Ready at `texc-proposals.vercel.app` behind Vercel sign-in. Vercel made it the project's **production** deployment (its first), though it was asked for a preview; it has no database secrets, so it opens nothing. A merge to `main` replaces it |
+| On that deployment, from outside: `robots.txt` refuses everything, a private source file answers the styled 404, sign-in is served from `syd1` under exactly one policy, and the pdf.js worker is this checkout's byte for byte under its own narrower policy | Claude | Done (the header half of D5) |
+| Supabase project `texc-proposals`, Sydney (`ap-southeast-2`), Postgres 17, in the Brand in Black organisation | Jesse, in the dashboard | **To do.** The connector's create call timed out twice without creating it. Keep the database password in the password manager |
+| Load `supabase/schema.sql` into it, then check it from outside (security advisors; the publishable key refused on every table and function; the three buckets private) | Claude | Waiting on the project. The schema is proven on Postgres 17.11 (82 promises) |
+| Secret variables in Vercel: `SUPABASE_URL`, `SUPABASE_SECRET_KEY` (Supabase → Settings → API Keys → new secret key), `VAULT_KEY` (`openssl rand -base64 32`, **a copy kept offline**), `IP_HASH_KEY` and `CRON_SECRET` (`openssl rand -hex 24` each), `SMTP2GO_API_KEY`, `ACCOUNT_SUPERS`, `NOTIFY_TO` | Jesse | To do. Typed into Vercel, never into a chat or a file |
+| `texc.au` as a sender in SMTP2GO, and its SPF and DKIM records at **GoDaddy** (texc.au's DNS is at GoDaddy, not Vercel) | Jesse, with TEXC's GoDaddy login | To do. Until then sign-in codes cannot be sent from `proposals@texc.au` |
+| D3: narrow `https://*.supabase.co` to the project's own address in `lib/csp.js` and `vercel.json` | Claude | Once the project exists |
+| The deploy check (`scripts/deploy-check.mjs`) in full, signed in | Claude | Needs `*.vercel.app` allowed in this environment's network settings (it is refused), the bypass secret, and a staff session |
+| `proposals.texc.au`: added to the Vercel project, and a CNAME at GoDaddy to the target Vercel shows | Claude adds it; the record at GoDaddy by whoever holds the login | **Last**: only once `main` carries the release. A custom domain bypasses Vercel sign-in |
+| Merge to `main` (the production branch) | Jesse approves the pull request | After the checks above |
 
 1. **Supabase**, Sydney region, on a paid plan (a free project pauses when
    idle, which takes every client link down).
