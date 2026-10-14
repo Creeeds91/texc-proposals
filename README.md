@@ -34,7 +34,7 @@ node scripts/demo/serve.mjs        # just the client demo page, with production'
 node scripts/check.mjs             # all checks
 node scripts/schema-standup-check.mjs   # prove supabase/schema.sql on a fresh database
 node scripts/demo/guide.mjs        # the staff guide as a printable PDF (demo-out/editor-guide.pdf)
-node scripts/demo/capture.mjs      # screenshots, scroll videos and A4 PDF into demo-out/ (--editor, --phase3 … --phase7 for one set)
+node scripts/demo/capture.mjs      # screenshots, scroll videos and A4 PDF into demo-out/ (--editor, --phase3 … --phase7 for one set or several)
 ```
 
 The local app needs Postgres 16 and Docker (the cloud container has both). It

@@ -31,7 +31,7 @@ they can see nothing.
 
 ![Signing in](guide/01-sign-in.webp)
 
-**Who can do what**
+### Who can do what
 
 | | Viewer | Editor | Administrator |
 |---|---|---|---|

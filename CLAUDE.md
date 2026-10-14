@@ -251,7 +251,7 @@ photo presented as a site it is not of.
 ```bash
 node scripts/build.mjs
 node scripts/check.mjs            # every suite; exit 3 = something NOT CHECKED
-node scripts/demo/capture.mjs     # stills at 1440 and 390, scroll video, A4 PDF, editor and Phase 3 screens
+node scripts/demo/capture.mjs     # stills at 1440 and 390, scroll videos, A4 PDF, editor and Phase 3–7 screens
 ```
 
 A skip (exit 3) is "not checked", never "fine". Look at every capture before

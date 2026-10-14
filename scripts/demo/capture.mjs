@@ -148,6 +148,13 @@ async function localApp() {
   return APP;
 }
 
+// The fictional year (dashboard-seed.mjs), seeded once per database: Phase 6
+// and Phase 7 share it, so a full run never shows each proposal twice.
+async function seeded(a) {
+  if (!a.seed) a.seed = (await import('./dashboard-seed.mjs')).seedDashboard(a.sb.conn);
+  return a.seed;
+}
+
 // Sign-in codes are limited to three per address per ten minutes (as in
 // production), so a session is reused unless the sign-in screens are being shot.
 let staffState = null;
@@ -659,9 +666,8 @@ async function phase6Stills() {
   mkdirSync(dir, { recursive: true });
   const shot = (page, name, opts = {}) => page.screenshot({ path: resolve(dir, name), ...opts });
   const a = await localApp();
-  const { seedDashboard } = await import('./dashboard-seed.mjs');
   const { psql } = await import('../lib/local-supabase.mjs');
-  const { ids } = seedDashboard(a.sb.conn);
+  const { ids } = await seeded(a);
   const settle = (p, ms = 300) => p.waitForTimeout(ms);
   const toEl = (p, sel, gap = 72) => p.evaluate(([q, g]) => { const n = document.querySelector(q); window.scrollTo(0, n.getBoundingClientRect().top + window.scrollY - g); }, [sel, gap]);
   // The whole element, wherever it is on the page (an element screenshot can stop at the window's edge).
@@ -848,9 +854,8 @@ async function phase7Stills() {
   mkdirSync(dir, { recursive: true });
   const shot = (page, name, opts = {}) => page.screenshot({ path: resolve(dir, name), ...opts });
   const a = await localApp();
-  const { seedDashboard } = await import('./dashboard-seed.mjs');
   const { psql } = await import('../lib/local-supabase.mjs');
-  const { ids } = seedDashboard(a.sb.conn);
+  const { ids } = await seeded(a);
   const settle = (p, ms = 300) => p.waitForTimeout(ms);
   const dash = async (p, query = '') => { await p.goto(`${a.url}/dashboard${query}`); await p.waitForSelector('.db-svg'); await settle(p); };
   // Huon Pipeline was archived 80 days ago in the seed: move it past 90. Ridgeway (accepted) is archived long ago.
@@ -908,18 +913,17 @@ async function pdf() {
 
 mkdirSync(OUT, { recursive: true });
 try {
-  if (process.argv.includes('--editor')) {
-    console.log(`demo-out/editor/: ${await editorStills()} editor captures`);
-  } else if (process.argv.includes('--phase3')) {
-    console.log(`demo-out/phase3/: ${await phase3Stills()} captures`);
-  } else if (process.argv.includes('--phase4')) {
-    console.log(`demo-out/phase4/: ${await phase4Stills()} captures`);
-  } else if (process.argv.includes('--phase5')) {
-    console.log(`demo-out/phase5/: ${await phase5Stills()} captures`);
-  } else if (process.argv.includes('--phase6')) {
-    console.log(`demo-out/phase6/: ${await phase6Stills()} files`);
-  } else if (process.argv.includes('--phase7')) {
-    console.log(`demo-out/phase7/: ${await phase7Stills()} captures`);
+  // One part or several (--phase6 --phase7 share a database, as in a full run).
+  const PARTS = [
+    ['--editor', 'editor/', editorStills, 'editor captures'],
+    ['--phase3', 'phase3/', phase3Stills, 'captures'],
+    ['--phase4', 'phase4/', phase4Stills, 'captures'],
+    ['--phase5', 'phase5/', phase5Stills, 'captures'],
+    ['--phase6', 'phase6/', phase6Stills, 'files'],
+    ['--phase7', 'phase7/', phase7Stills, 'captures'],
+  ].filter(([flag]) => process.argv.includes(flag));
+  if (PARTS.length) {
+    for (const [, dir, run, what] of PARTS) console.log(`demo-out/${dir}: ${await run()} ${what}`);
   } else {
     const desk = await stills(1440, 900, 1);
     const phone = await stills(390, 844, 2);
