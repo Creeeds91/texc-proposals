@@ -15,6 +15,9 @@
  *   - purges: only archived for 90 days, never accepted, and nothing left.
  *   - the document library: an approved file is a record (never changed or
  *     deleted), and a purge leaves the library alone.
+ *   - the archive (Phase 9): found by a document's title, never a storage path;
+ *     automatic archiving only once TEXC sets a period, and an accepted
+ *     proposal deleted only after its keeping period.
  *
  *   node scripts/schema-standup-check.mjs        a fresh local stack, deleted afterwards
  *
@@ -40,7 +43,7 @@ const RPCS = {
   texc_publish: { p: {} }, texc_rotate: { p: {} }, texc_withdraw: { p_proposal: '00000000-0000-0000-0000-000000000000', p_actor: 'x', p_note: '' },
   texc_record_view: { p: {} }, texc_accept: { p: {} },
   texc_set_archived: { p: {} }, texc_search: { p_q: 'x' }, texc_overview: { p: {} }, texc_purge: { p: {} },
-  texc_evidence_usage: {},
+  texc_evidence_usage: {}, texc_archive: { p: {} }, texc_auto_archive: { p: {} },
 };
 
 const hex = (n) => randomBytes(n).toString('hex');
@@ -329,6 +332,33 @@ export async function runSchemaProof({ log = () => {} } = {}) {
     const stillGuarded = await rest('DELETE', `texc_events?proposal_id=eq.${pid}`);
     ok('after a purge the logs are append-only again (the flag did not outlive it)', !stillGuarded.ok, stillGuarded.status);
 
+    log('The archive and retention (Phase 9)');
+    const arc = (await rest('POST', 'texc_proposals', { slug: hex(5), created_by: 'proof@example.com' })).json[0].id;
+    const arcRef = (await rpc('texc_claim_reference', { p_proposal: arc, p_prefix: 'PROOF-P' })).json;
+    const arcText = JSON.stringify({ p: 9, attachments: [{ id: 'a1', title: 'Workers compensation certificate', docCode: 'WC-77310', visibility: 'client' }] });
+    await rpc('texc_publish', { p: { ...revision(1), proposal_id: arc, reference: arcRef, access_token: hex(32), passphrase_enc: 'vault:arch',
+      published_text: arcText, valid_until: '2020-01-01', project: 'Quarry bench', search_extra: 'Eaglehawk Constructions',
+      attachments_snapshot: [{ card: 'a1', file: 'f', path: `proposals/${arc}/attachments/${sha('w')}-wc.pdf`, sha256: sha('w'), bytes: 9 }] } });
+    const archFound = async (q) => ((await rpc('texc_archive', { p: { q } })).json || []).filter((r) => r.proposal_id === arc);
+    const arcByDoc = await archFound('workers compensation');
+    const arcByCode = await archFound('wc-77310');
+    const arcByClient = await archFound('eaglehawk');
+    const arcByNothing = await archFound('microblasting zebra');
+    ok('the archive finds a revision by its documents\' titles and codes, and by its proposal', arcByDoc.length === 1 && arcByCode.length === 1 && arcByClient.length === 1 && arcByNothing.length === 0
+      && arcByDoc[0].documents[0].docCode === 'WC-77310' && arcByDoc[0].files[0].sha256 === sha('w'), [arcByDoc.length, arcByCode.length, arcByClient.length, arcByNothing.length]);
+    ok('and never hands out a storage path', !JSON.stringify((await rpc('texc_archive', { p: {} })).json).includes('/attachments/'));
+    const arcNotSet = await rpc('texc_auto_archive', { p: {} });
+    ok('with no keeping period set, nothing is archived automatically', arcNotSet.ok && arcNotSet.json.archived.length === 0 && arcNotSet.json.days === null, arcNotSet.text);
+    await rest('POST', 'texc_settings?on_conflict=key', { key: 'retention', value: { archiveAfterDays: 30 }, updated_by: 'proof@example.com' }, 'return=minimal,resolution=merge-duplicates');
+    const arcQuiet = await rpc('texc_auto_archive', { p: {} });
+    ok('a proposal changed recently is left alone, however long ago it ran out', arcQuiet.ok && !arcQuiet.json.archived.includes(arc), arcQuiet.text);
+    // Back-dated with triggers off for the statement: the row's own trigger would stamp it "now".
+    q(`begin; set local session_replication_role = replica; update public.texc_proposals set updated_at = now() - interval '60 days' where id = '${arc}'; commit;`);
+    const arcAuto = await rpc('texc_auto_archive', { p: {} });
+    const arcRow = (await rest('GET', `texc_proposals?id=eq.${arc}&select=archived_at,archived_by,archive_reason`)).json[0];
+    ok('once set, a proposal that ran out without acceptance is archived, as retention, with its reason', arcAuto.json.archived.includes(arc) && !arcAuto.json.archived.includes(pid)
+      && arcRow.archived_at && arcRow.archived_by === 'retention' && /automatically/.test(arcRow.archive_reason), [arcAuto.text, arcRow]);
+
     const wd = await rpc('texc_withdraw', { p_proposal: pid, p_actor: 'proof', p_note: 'sent in error' });
     const wrev = await rest('GET', `texc_proposal_revisions?id=eq.${revs.json[1].id}&select=withdrawn_at`);
     const wprop = await rest('GET', `texc_proposals?id=eq.${pid}&select=status`);
@@ -341,6 +371,17 @@ export async function runSchemaProof({ log = () => {} } = {}) {
     ok('a draft save on a stale version matches nothing (the conflict check)', d1.json.length === 1 && d2.json.length === 0, [d1.json.length, d2.json.length]);
     const big = await rest('PATCH', `texc_drafts?proposal_id=eq.${pid}`, { config: { x: 'y'.repeat(1100000) } });
     ok('a draft over 1 MB is refused by the database', !big.ok, big.status);
+
+    // Last, because it deletes the proof's accepted proposal: a keeping period, once set and passed.
+    await rest('POST', 'texc_settings?on_conflict=key', { key: 'retention', value: { archiveAfterDays: 30, keepAcceptedYears: 7 }, updated_by: 'proof@example.com' }, 'return=minimal,resolution=merge-duplicates');
+    await rpc('texc_set_archived', { p: { proposal_id: pid, archive: true, actor: 'proof', reason: 'Proof of the keeping period' } });
+    q(`update public.texc_proposals set archived_at = now() - interval '200 days' where id = '${pid}'`);
+    const keptSeven = await rpc('texc_purge', { p: { proposal_id: pid, reference: ref1.json } });
+    q(`begin; set local texc.purge = 'on'; update public.texc_acceptances set accepted_at = now() - interval '8 years' where proposal_id = '${pid}'; commit;`);
+    const pastKeep = await rpc('texc_purge', { p: { proposal_id: pid, reference: ref1.json } });
+    const leftAcceptances = q(`select count(*) from public.texc_acceptances where proposal_id = '${pid}'`);
+    ok('an accepted proposal is kept through its keeping period, and deleted, acceptance and all, only after it', !keptSeven.ok && /accepted proposals are kept/.test(keptSeven.text)
+      && pastKeep.ok && pastKeep.json.acceptances >= 1 && leftAcceptances === '0', [keptSeven.text, pastKeep.text, leftAcceptances]);
     return { ran: true, results };
   } finally {
     sb.destroy();

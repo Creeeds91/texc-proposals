@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en-AU" data-boot="archive-page">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<title>Archive · {{brand.name}} Proposals</title>
+<link rel="icon" href="{{brand.logoGold}}" type="image/svg+xml">
+<script type="application/json" id="brand-data">{{brand.json}}</script>
+<link rel="preload" href="/assets/fonts/Oxanium-800-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/assets/css/tokens.css">
+<link rel="stylesheet" href="/assets/css/proposal.css">
+<link rel="stylesheet" href="/assets/css/dashboard.css">
+<link rel="stylesheet" href="/assets/css/archive.css">
+<script type="module" src="/assets/js/archive.js"></script>
+</head>
+<body class="db" data-surface="paper">
+<a class="skip" href="#db-main">Skip to the archive</a>
+<header class="db-top">
+  <div class="db-top-inner">
+    <a class="db-brand" href="/dashboard"><img src="{{brand.logoGold}}" alt="{{brand.name}}" width="72" height="28"><span>Proposals</span></a>
+    <nav class="db-nav" aria-label="Staff">
+      <a href="/dashboard">Dashboard</a>
+      <a href="/documents">Documents</a>
+      <a href="/archive" aria-current="page">Archive</a>
+      <a href="/editor" data-role="editor" hidden>Editor</a>
+      <a href="/editor#people" data-role="admin" hidden>People</a>
+    </nav>
+    <div class="db-who"><span id="db-who"></span><button type="button" class="db-signout" id="db-signout">Sign out</button></div>
+  </div>
+</header>
+
+<main id="db-main" class="db-main" tabindex="-1">
+  <div class="db-head">
+    <div>
+      <h1 class="db-title">Archive</h1>
+      <p class="db-sub">Every revision ever sent, archived proposals included, and each one exactly as it was sent.</p>
+    </div>
+  </div>
+
+  <p class="db-loading" id="db-loading" role="status">Loading…</p>
+  <p class="db-error" id="db-error" role="alert" hidden></p>
+
+  <section class="db-card arc-keep" aria-labelledby="arc-keep-h" hidden>
+    <div class="db-card-head">
+      <h2 class="db-h3" id="arc-keep-h">Keeping periods</h2>
+      <button type="button" class="db-textbtn" id="arc-keep-edit" data-role="admin" hidden><svg class="ic" aria-hidden="true"><use href="/assets/img/icons.svg#pen-line"></use></svg><span>Change</span></button>
+    </div>
+    <dl class="arc-keep-list" id="arc-keep-list"></dl>
+  </section>
+
+  <section class="db-list arc-list" aria-labelledby="arc-list-h" hidden>
+    <div class="db-section-head">
+      <h2 class="db-h2" id="arc-list-h">Sent revisions</h2>
+      <p class="db-count" id="arc-count" role="status" aria-live="polite"></p>
+    </div>
+    <form class="db-filters" id="arc-filters" role="search">
+      <label class="db-control db-control--search"><span class="db-control-label">Search</span>
+        <span class="db-search"><svg class="ic" aria-hidden="true"><use href="/assets/img/icons.svg#search"></use></svg><input type="search" id="f-q" placeholder="Client, site, reference or document code" autocomplete="off" maxlength="200"></span>
+      </label>
+      <label class="db-control"><span class="db-control-label">Year sent</span><select id="f-year"></select></label>
+      <label class="db-control"><span class="db-control-label">Service</span><select id="f-service"></select></label>
+      <label class="db-control"><span class="db-control-label">Region</span><select id="f-region"></select></label>
+      <label class="db-control"><span class="db-control-label">Showing</span><select id="f-show"></select></label>
+    </form>
+    <p class="arc-one" id="arc-one" hidden></p>
+    <div id="arc-groups"></div>
+    <p class="db-empty" id="arc-empty" hidden></p>
+  </section>
+</main>
+
+<dialog class="db-panel" id="db-panel" aria-labelledby="db-panel-title"></dialog>
+<div class="db-toast" id="db-toast" role="status" aria-live="polite" hidden></div>
+</body>
+</html>

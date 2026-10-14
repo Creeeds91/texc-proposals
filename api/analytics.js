@@ -18,6 +18,7 @@ import { overview, search, serviceNames } from '../lib/overview.js';
 import { DOC_TYPES } from '../assets/js/schema.js';
 import { UUID_RE } from '../lib/tokens.js';
 import { rateLimited, tooMany } from '../lib/ratelimit.js';
+import { getRetention } from '../lib/retention.js';
 
 export const config = { maxDuration: 15 };
 
@@ -56,7 +57,8 @@ export default async function handler(req, res) {
     return;
   }
 
-  const rows = await overview(d);
+  const [rows, retention] = await Promise.all([overview(d), getRetention(d)]);
   if (!rows) { res.status(503).json({ error: 'The dashboard could not be loaded.' }); return; }
-  res.status(200).json({ now: new Date().toISOString(), role: who.role, rows, services: serviceNames(), docTypes: DOC_TYPES });
+  res.status(200).json({ now: new Date().toISOString(), role: who.role, rows, services: serviceNames(), docTypes: DOC_TYPES,
+    retention: { archiveAfterDays: retention.archiveAfterDays, keepAcceptedYears: retention.keepAcceptedYears } });
 }

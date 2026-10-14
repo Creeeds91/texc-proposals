@@ -1084,7 +1084,7 @@ function initAcceptance() {
       return;
     }
     if (typeof hooks.accept !== 'function') {
-      say(note, 'info', 'Preview only — online acceptance opens when this proposal is issued.');
+      say(note, 'info', hooks.previewNote || 'Preview only — online acceptance opens when this proposal is issued.');
       return;
     }
     const go = form.querySelector('[data-accept-go]');
@@ -1147,7 +1147,7 @@ function initAcceptance() {
     if (val('message').length < 5) bad.push('message');
     bad.forEach((n) => changes.elements[n].setAttribute('aria-invalid', 'true'));
     if (bad.length) { say(cnote, 'error', 'Please give your name, an email address and what you would like changed.'); changes.elements[bad[0]].focus(); return; }
-    if (typeof hooks.requestChanges !== 'function') { say(cnote, 'info', 'Preview only — requests are sent from the issued proposal.'); return; }
+    if (typeof hooks.requestChanges !== 'function') { say(cnote, 'info', hooks.previewNote || 'Preview only — requests are sent from the issued proposal.'); return; }
     const go = changes.querySelector('[data-changes-go]');
     go.disabled = true;
     let out;
@@ -1169,6 +1169,7 @@ function initAcceptance() {
  *   issued        true on a client's issued proposal
  *   beforePrint   async () => {}   refresh anything that has gone stale
  *   attachment    async (cardId, { download }) => { url, name, bytes }   a fresh link to one document
+ *   previewNote   what the acceptance and change forms say when nothing can be sent from this page
  */
 const hooks = {};
 export function setHooks(h) { Object.assign(hooks, h); }
@@ -1180,9 +1181,10 @@ window.proposalState = () => ({ options: [...state.options], totals: state.view.
 
 async function boot() {
   ROOT.classList.add('js');
-  // The gate (Phase 3) decrypts and the editor loads its draft; each then
-  // calls applyConfig + initEffects itself.
-  if (ROOT.dataset.boot === 'gate' || ROOT.dataset.boot === 'editor') return;
+  // The gate (Phase 3) decrypts, the editor loads its draft and the archive
+  // view (Phase 9) loads a sent revision; each then calls applyConfig +
+  // initEffects itself.
+  if (ROOT.dataset.boot === 'gate' || ROOT.dataset.boot === 'editor' || ROOT.dataset.boot === 'archive') return;
   if (ROOT.dataset.boot === 'fixture' && ROOT.dataset.fixture) {
     try {
       const res = await fetch(ROOT.dataset.fixture, { cache: 'no-store' });

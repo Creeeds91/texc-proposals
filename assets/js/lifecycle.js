@@ -292,5 +292,19 @@ export const PURGE_AFTER_DAYS = 90;
 /** The first instant it may be deleted, or null while it is not archived. */
 export const purgeableFrom = (r) => (r && r.archived_at ? new Date(new Date(r.archived_at).getTime() + PURGE_AFTER_DAYS * DAY) : null);
 
+/**
+ * Until when an accepted proposal is kept (Phase 9): the keeping period TEXC
+ * sets (retention.keepAcceptedYears), from its last acceptance. Null while no
+ * period is set: then it is kept for good. texc_purge() holds the same rule.
+ */
+export function keptUntil(acceptedAts, retention) {
+  const years = retention && Number.isInteger(retention.keepAcceptedYears) && retention.keepAcceptedYears >= 1 ? retention.keepAcceptedYears : null;
+  const times = (acceptedAts || []).map((x) => Date.parse(x)).filter(Number.isFinite);
+  if (!years || !times.length) return null;
+  const until = new Date(Math.max(...times));
+  until.setUTCFullYear(until.getUTCFullYear() + years);
+  return until;
+}
+
 /** The name a row is shown by: its project, or what it is while it has none. */
 export const titleOf = (r) => r.project || (r.reference ? `Proposal ${r.reference}` : 'Untitled draft');

@@ -27,6 +27,9 @@
  *   flow          staff to client: publish, unlock, revise, supersede, rotate, approve a person   (stack + browser)
  *   library       the document library: roles, the file check, approval, publishing a library
  *                 document, a renewal, retiring, and a purge leaving it alone   (stack)
+ *   archive       the archive: who may see it, search, a revision as sent and its documents, the
+ *                 record pack built in Chromium and every fingerprint in it checked (and a tampered
+ *                 file named), keeping periods, the daily run   (stack + browser)
  *   deploy        scripts/deploy-check.mjs against the local app, signed in, and against a
  *                 careless server it must catch (it is run against a real preview by hand)   (stack)
  *   attachments   the PDF check: built fixtures for each way a file can be unsafe, TEXC's
@@ -46,13 +49,13 @@ import { execFileSync, spawnSync, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { build, checkView, templateData } from './build.mjs';
 import { BRAND } from '../lib/brand.js';
-import { CLIENT_CSP, EDITOR_CSP, WORKER_CSP } from '../lib/csp.js';
+import { CLIENT_CSP, EDITOR_CSP, WORKER_CSP, REVISION_CSP, ARCHIVE_CSP } from '../lib/csp.js';
 import { quoteTotals, lineAmountCents, formatAUD, formatQty } from '../assets/js/money.js';
 import { runChecks } from '../assets/js/checks.js';
 import { scanText, localityWarning } from '../assets/js/sensitive.js';
 import { inspectPdf } from '../lib/pdf-inspect.js';
 import { FIXTURES as PDF_FIXTURES } from './lib/pdf-fixtures.mjs';
-import { suiteSchema, suiteEnvelope, suiteRefusals, suiteAcceptance, suiteEditor, suiteFlow, suiteDashboard, suiteA11y, suiteDeploy, suiteLibrary, closeServerSuites } from './lib/server-suites.mjs';
+import { suiteSchema, suiteEnvelope, suiteRefusals, suiteAcceptance, suiteEditor, suiteFlow, suiteDashboard, suiteA11y, suiteDeploy, suiteLibrary, suiteArchive, closeServerSuites } from './lib/server-suites.mjs';
 import * as LC from '../assets/js/lifecycle.js';
 import { toCsv, cell, COLUMNS as CSV_COLUMNS } from '../lib/report.js';
 
@@ -150,7 +153,7 @@ const BRAND_PATTERNS = [/TEXC/, /0467\s?651\s?182/, /47\s?688\s?368\s?881/, /man
 
 function suiteBrand() {
   const files = [
-    ...walk('api', ['.js']), ...walk('lib', ['.js']).filter((f) => !['lib/brand.js', 'lib/editor-html.js', 'lib/signin-html.js', 'lib/dashboard-html.js', 'lib/library-html.js', 'lib/template-data.js', 'lib/demo-fixture.js'].includes(f)),
+    ...walk('api', ['.js']), ...walk('lib', ['.js']).filter((f) => !['lib/brand.js', 'lib/editor-html.js', 'lib/signin-html.js', 'lib/dashboard-html.js', 'lib/library-html.js', 'lib/revision-html.js', 'lib/archive-html.js', 'lib/template-data.js', 'lib/demo-fixture.js'].includes(f)),
     ...walk('assets/js', ['.js']), ...walk('scripts', ['.mjs', '.js']).filter((f) => f !== 'scripts/check.mjs'),
     ...walk('templates', ['.html']),
   ];
@@ -176,7 +179,7 @@ function suiteCsp() {
   let views;
   try { views = build({ write: false }); }
   catch (e) { return { status: FAIL, detail: [e.message] }; }
-  const HTML_MODULES = new Set(['lib/editor-html.js', 'lib/signin-html.js', 'lib/dashboard-html.js', 'lib/library-html.js']);
+  const HTML_MODULES = new Set(['lib/editor-html.js', 'lib/signin-html.js', 'lib/dashboard-html.js', 'lib/library-html.js', 'lib/revision-html.js', 'lib/archive-html.js']);
   for (const [name, body] of Object.entries(views)) {
     const isEditor = name === 'lib/editor-html.js';
     // Pages served by functions are string modules; check the page inside them.
@@ -190,6 +193,8 @@ function suiteCsp() {
   const cfg = JSON.parse(read('vercel.json'));
   const all = (cfg.headers || []).find((h) => h.source === '/(.*)');
   const get = (k) => all && (all.headers.find((h) => h.key.toLowerCase() === k.toLowerCase()) || {}).value;
+  const headerRules = (key) => (cfg.headers || []).map((r) => ({ re: new RegExp('^' + r.source + '$'), value: (r.headers.find((h) => h.key === key) || {}).value })).filter((r) => r.value);
+  const valuesFor = (key, path) => headerRules(key).filter((r) => r.re.test(path)).map((r) => r.value);
   const policyOf = (rule) => (rule.headers.find((h) => h.key === 'Content-Security-Policy') || {}).value;
   const policyRules = (cfg.headers || []).filter(policyOf).map((r) => ({ re: new RegExp('^' + r.source + '$'), value: policyOf(r) }));
   const policiesFor = (path) => policyRules.filter((r) => r.re.test(path)).map((r) => r.value);
@@ -199,12 +204,29 @@ function suiteCsp() {
   const csp = policiesFor('/p/check')[0] || '';
   if (csp !== CLIENT_CSP) problems.push('vercel.json CSP differs from CLIENT_CSP in lib/csp.js — change one place, then copy it');
   const id = '00000000-0000-4000-8000-000000000000';
-  for (const path of ['/', '/p/check', '/demo', '/signin', '/dashboard', '/api/proposal', '/views/proposal.html', '/assets/css/proposal.css', '/no-such-page']) {
+  for (const path of ['/', '/p/check', '/demo', '/signin', '/dashboard', '/api/proposal', '/api/archive', '/views/proposal.html', '/assets/css/proposal.css', '/no-such-page']) {
     const got = policiesFor(path);
     if (got.length !== 1 || got[0] !== CLIENT_CSP) problems.push(`${path} gets ${got.length} policies from vercel.json, not just CLIENT_CSP`);
   }
-  for (const path of ['/editor', `/editor/${id}`, '/api/editor', `/staff/acceptance/${id}`, '/api/acceptance-record']) {
+  for (const path of ['/editor', `/editor/${id}`, '/api/editor', `/staff/acceptance/${id}`, '/api/acceptance-record', `/staff/revision/${id}`, '/api/revision-view', '/archive', '/api/archive-page']) {
     if (policiesFor(path).length) problems.push(`${path} sets its own policy, but vercel.json also sends one`);
+  }
+  // Framing: nothing may be framed, except a sent revision by this origin (the
+  // record pack draws it in a frame on the Archive page), which sends its own
+  // X-Frame-Options: SAMEORIGIN beside REVISION_CSP's frame-ancestors 'self'.
+  for (const path of ['/', '/p/check', '/archive', '/dashboard', '/editor', `/staff/acceptance/${id}`, '/api/archive', '/assets/css/proposal.css', '/no-such-page']) {
+    const got = valuesFor('X-Frame-Options', path);
+    if (got.length !== 1 || got[0] !== 'DENY') problems.push(`${path} must get exactly X-Frame-Options: DENY from vercel.json`);
+  }
+  for (const path of [`/staff/revision/${id}`, '/api/revision-view']) {
+    if (valuesFor('X-Frame-Options', path).length) problems.push(`${path} sets its own X-Frame-Options, but vercel.json also sends one`);
+  }
+  if (REVISION_CSP !== CLIENT_CSP.replace("frame-ancestors 'none'", "frame-ancestors 'self'") || !REVISION_CSP.includes("frame-ancestors 'self'")) problems.push('REVISION_CSP must differ from CLIENT_CSP only by frame-ancestors \'self\'');
+  if (ARCHIVE_CSP.replace("; frame-src 'self'", '') !== CLIENT_CSP || !ARCHIVE_CSP.includes("frame-src 'self'")) problems.push('ARCHIVE_CSP must differ from CLIENT_CSP only by frame-src \'self\'');
+  for (const [file, policy, frame] of [['api/revision-view.js', 'REVISION_CSP', "'X-Frame-Options', 'SAMEORIGIN'"], ['api/archive-page.js', 'ARCHIVE_CSP', null]]) {
+    const src = read(file);
+    if (!src.includes(`'Content-Security-Policy', ${policy}`)) problems.push(`${file} does not send ${policy}`);
+    if (frame && !src.includes(frame)) problems.push(`${file} does not send X-Frame-Options: SAMEORIGIN`);
   }
   const workerPath = '/assets/vendor/pdfjs/x/build/pdf.worker.min.mjs';
   if (policiesFor(workerPath).length !== 1) problems.push(`${workerPath} gets ${policiesFor(workerPath).length} policies from vercel.json, not one`);
@@ -222,7 +244,6 @@ function suiteCsp() {
   if (vendorCsp !== WORKER_CSP) problems.push('vercel.json does not send WORKER_CSP with /assets/vendor/ (the pdf.js worker)');
   for (const never of ["'unsafe-inline'", "'unsafe-eval'", 'blob:', 'data:', '*']) if (WORKER_CSP.split(/[\s;]+/).includes(never)) problems.push(`the worker CSP allows ${never}`);
   if (!/connect-src 'self'( https:\/\/\S+)?;/.test(CLIENT_CSP) || !CLIENT_CSP.includes("worker-src 'self'")) problems.push('the client CSP must allow the viewer\'s worker and its fetch of the storage host, and nothing wider');
-  if (get('X-Frame-Options') !== 'DENY') problems.push('X-Frame-Options must be DENY');
   if (get('X-Content-Type-Options') !== 'nosniff') problems.push('X-Content-Type-Options must be nosniff');
   if (get('Referrer-Policy') !== 'no-referrer') problems.push('Referrer-Policy must be no-referrer');
   if (!/noindex/.test(get('X-Robots-Tag') || '')) problems.push('X-Robots-Tag must carry noindex');
@@ -883,7 +904,7 @@ const SUITES = {
   confirm: suiteConfirm, render: suiteRender, print: suitePrint, 'content-sync': suiteContentSync,
   lifecycle: suiteLifecycle,
   schema: suiteSchema, envelope: () => suiteEnvelope({ browserSession }), refusals: suiteRefusals, acceptance: suiteAcceptance, editor: suiteEditor, flow: suiteFlow,
-  dashboard: suiteDashboard, library: suiteLibrary, a11y: suiteA11y, budget: suiteBudget, lighthouse: suiteLighthouse, deploy: suiteDeploy,
+  dashboard: suiteDashboard, library: suiteLibrary, archive: suiteArchive, a11y: suiteA11y, budget: suiteBudget, lighthouse: suiteLighthouse, deploy: suiteDeploy,
 };
 
 const wanted = args.filter((a) => !a.startsWith('--'));

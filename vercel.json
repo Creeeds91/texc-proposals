@@ -29,6 +29,10 @@
       "destination": "/api/documents"
     },
     {
+      "source": "/archive",
+      "destination": "/api/archive-page"
+    },
+    {
       "source": "/editor",
       "destination": "/api/editor"
     },
@@ -39,16 +43,16 @@
     {
       "source": "/staff/acceptance/:id",
       "destination": "/api/acceptance-record?id=:id"
+    },
+    {
+      "source": "/staff/revision/:id",
+      "destination": "/api/revision-view?id=:id"
     }
   ],
   "headers": [
     {
       "source": "/(.*)",
       "headers": [
-        {
-          "key": "X-Frame-Options",
-          "value": "DENY"
-        },
         {
           "key": "X-Content-Type-Options",
           "value": "nosniff"
@@ -72,7 +76,16 @@
       ]
     },
     {
-      "source": "/((?!editor|api/editor|staff/|api/acceptance-record|assets/vendor/).*)",
+      "source": "/((?!staff/revision/|api/revision-view).*)",
+      "headers": [
+        {
+          "key": "X-Frame-Options",
+          "value": "DENY"
+        }
+      ]
+    },
+    {
+      "source": "/((?!editor|api/editor|staff/|api/acceptance-record|api/revision-view|archive|api/archive-page|assets/vendor/).*)",
       "headers": [
         {
           "key": "Content-Security-Policy",
@@ -101,6 +114,12 @@
           "value": "public, max-age=31536000, immutable"
         }
       ]
+    }
+  ],
+  "crons": [
+    {
+      "path": "/api/retention",
+      "schedule": "17 16 * * *"
     }
   ]
 }

@@ -11,7 +11,7 @@
  */
 import {
   STATES, PERIODS, SORTS, figures, monthly, listRows, followUpList, facets, dayLabel, hobartDate, titleOf, periodLabel, stateOf, followUps,
-  PURGE_AFTER_DAYS, purgeableFrom,
+  PURGE_AFTER_DAYS, purgeableFrom, keptUntil,
 } from './lifecycle.js';
 import { DOC_TYPES } from './schema.js';
 import { formatAUD } from './money.js';
@@ -484,8 +484,14 @@ function archiveForm(p, st) {
  */
 function purgeLine(p) {
   if (!can('super') || !p.archivedAt) return null;
-  if ((p.acceptances || []).length) return h('p', { class: 'db-note', text: 'It was accepted, so it is kept as a business record and cannot be deleted.' });
-  const from = purgeableFrom({ archived_at: p.archivedAt });
+  let from = purgeableFrom({ archived_at: p.archivedAt });
+  if ((p.acceptances || []).length) {
+    // Kept for good, unless TEXC has set a keeping period (Phase 9); then from the later of the two.
+    const until = keptUntil(p.acceptances.map((a) => a.acceptedAt), state.retention);
+    if (!until) return h('p', { class: 'db-note', text: 'It was accepted, so it is kept as a business record and cannot be deleted.' });
+    if (until > state.now) return h('p', { class: 'db-note', text: `It was accepted, so it is kept until ${dayLabel(until)}, the end of its keeping period.` });
+    if (until > from) from = until;
+  }
   if (from > state.now) return h('p', { class: 'db-note', text: `Brand in Black can delete it permanently from ${dayLabel(from)}, ${PURGE_AFTER_DAYS} days after it was archived.` });
   return h('div', { class: 'db-actions' }, h('button', { type: 'button', class: 'btn btn--secondary btn--sm db-danger', id: 'db-purge', onclick: () => purgeForm(p) }, icon('trash-2'), h('span', { text: 'Delete permanently…' })));
 }
@@ -545,6 +551,7 @@ async function reload() {
   }
   state.rows = r.json.rows;
   state.services = r.json.services || {};
+  state.retention = r.json.retention || null;
   state.now = new Date(r.json.now);
   if (state.f.q) {
     const s2 = await api('GET', `/api/analytics?q=${encodeURIComponent(state.f.q)}`);

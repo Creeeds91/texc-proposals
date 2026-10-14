@@ -16,7 +16,7 @@
  * Each needs Postgres 16 and Docker (scripts/lib/local-supabase.mjs) and the
  * browser ones need Playwright; without them a suite reports NOT CHECKED.
  */
-import { readFileSync, existsSync, mkdirSync, readdirSync, statSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { deflateSync, crc32 as zlibCrc32 } from 'node:zlib';
 import { spawnSync } from 'node:child_process';
@@ -1661,4 +1661,273 @@ export async function suiteA11y() {
   }
   if (found.length) return { status: FAIL, detail: found };
   return { status: PASS, detail: [`axe-core ${axeVersion()}, WCAG 2.2 A and AA: no violations on ${checked} pages and states (${PAGES.map((p) => p.name).join(', ')}) at 1440 and 390`] };
+}
+
+/* ------------------------------------------------------------ archive (Phase 9) */
+
+/**
+ * A zip's entries, read independently of assets/js/zip.js (which wrote it):
+ * stored entries only, every CRC checked. Returns Map(name → Buffer).
+ */
+export function readZip(buf) {
+  let end = buf.length - 22;
+  while (end >= 0 && buf.readUInt32LE(end) !== 0x06054b50) end -= 1;
+  if (end < 0) throw new Error('no end-of-directory record');
+  const count = buf.readUInt16LE(end + 10);
+  let p = buf.readUInt32LE(end + 16);
+  const out = new Map();
+  for (let i = 0; i < count; i += 1) {
+    if (buf.readUInt32LE(p) !== 0x02014b50) throw new Error('a damaged directory entry');
+    const method = buf.readUInt16LE(p + 10);
+    const crc = buf.readUInt32LE(p + 16);
+    const size = buf.readUInt32LE(p + 24);
+    const nlen = buf.readUInt16LE(p + 28);
+    const name = buf.toString('utf8', p + 46, p + 46 + nlen);
+    const off = buf.readUInt32LE(p + 42);
+    if (buf.readUInt32LE(off) !== 0x04034b50) throw new Error(`a damaged entry: ${name}`);
+    const start = off + 30 + buf.readUInt16LE(off + 26) + buf.readUInt16LE(off + 28);
+    const data = buf.subarray(start, start + size);
+    if (method !== 0) throw new Error(`${name} is compressed; the pack stores files as they are`);
+    if (zlibCrc32(data) !== crc) throw new Error(`${name}: its CRC does not match`);
+    out.set(name, data);
+    p += 46 + nlen + buf.readUInt16LE(p + 30) + buf.readUInt16LE(p + 32);
+  }
+  return out;
+}
+
+export async function suiteArchive() {
+  const a = await app();
+  if (!a) return skipNoStack();
+  const b = await browser();
+  if (!b) return { status: SKIP, detail: ['Playwright is not available, so the archive page and the record pack could not be driven'] };
+  const fails = [];
+  const expect = (cond, what) => { if (!cond) fails.push(what); };
+  const { psql } = await import('./local-supabase.mjs');
+  const q = (sql) => psql(a.sb.conn, sql);
+  const { ARCHIVE_CSP, REVISION_CSP } = await import('../../lib/csp.js');
+  const local = (csp) => csp.replaceAll('https://*.supabase.co', a.sb.url);
+  const staff = await checkStaff(a);
+  const tag = randomBytes(3).toString('hex');
+  const anon = client(a);
+  const people = {};
+  for (const role of ['admin', 'editor', 'viewer']) {
+    const email = `arc-${role}-${tag}@example.com`;
+    await anon.call('POST', '/api/auth?action=code', { email });
+    await staff.call('POST', '/api/people', { email, status: 'active', role });
+    people[role] = client(a);
+    await people[role].signIn(email);
+  }
+  const { admin, editor, viewer } = people;
+  const arc = (c, body) => c.call('POST', '/api/archive', body);
+  const audited = (action, proposalId) => q(`select count(*) from public.texc_staff_audit where action = '${action}'${proposalId ? ` and proposal_id = '${proposalId}'` : ''}`) !== '0';
+
+  // 1. The pages, and who may see them.
+  const stranger = await anon.call('GET', '/archive');
+  expect(stranger.status === 302 && stranger.headers.get('location') === '/signin?next=%2Farchive', `/archive without a session: ${stranger.status} ${stranger.headers.get('location')}`);
+  const page = await viewer.call('GET', '/archive');
+  expect(page.status === 200 && /<title>Archive/.test(page.text) && page.headers.get('content-security-policy') === local(ARCHIVE_CSP) && page.headers.get('x-frame-options') === 'DENY',
+    `a viewer opening /archive: ${page.status}, policy ${page.headers.get('content-security-policy') === local(ARCHIVE_CSP)}, frame ${page.headers.get('x-frame-options')}`);
+  expect((await arc(anon, { action: 'search' })).status === 401, 'the archive answered without a session');
+  expect((await viewer.call('POST', '/api/archive', { action: 'search' }, { origin: 'https://elsewhere.example' })).status === 403, 'the archive answered a cross-site request');
+
+  // 2. A proposal sent twice — Rev B replaces one document's file — and accepted on Rev B.
+  const p = await demoProposal(staff);
+  const { checkContext } = await import('../../lib/proposals.js');
+  const dr = (await staff.call('GET', `/api/drafts?id=${p.id}`)).json;
+  const card = dr.config.attachments.find((c) => c.visibility === 'client');
+  const revised = testPdf(`${card.title}, revised ${tag}`);
+  const up = await uploadPdf(staff, p.id, revised, `${card.id}-revised.pdf`);
+  card.file = up.json.file.id;
+  const coded = dr.config.attachments.filter((c) => c.visibility === 'client')[1];
+  const docCode = `DWG-${tag.toUpperCase()}`;
+  coded.docCode = docCode;
+  const originalTitle = dr.config.meta.project;
+  dr.config.meta.project = `${originalTitle} (revised)`;
+  const acks = runChecks(dr.config, checkContext()).acks.map((x) => x.key);
+  const putB = await staff.call('PUT', '/api/drafts', { id: p.id, version: dr.version, config: { ...dr.config, acks } });
+  const pubB = await staff.call('POST', '/api/proposals', { action: 'publish', id: p.id, version: putB.json.version });
+  expect(pubB.status === 200, `publishing Rev B answered ${pubB.status} ${pubB.text.slice(0, 160)}`);
+  const revs = JSON.parse(q(`select json_agg(json_build_object('id', id, 'rev', rev_label, 'sha', plaintext_sha256, 'vt', published_text::jsonb->>'__vt', 'snap', attachments_snapshot) order by rev_index)::text from public.texc_proposal_revisions where proposal_id = '${p.id}'`));
+  const [A, B] = revs;
+  const { quoteTotals } = await import('../../assets/js/money.js');
+  const person = { name: 'Priya Natarajan', position: 'Contracts Manager', company: DEMO.client.company, email: 'priya.natarajan@example.com' };
+  const accepted = await client(a).call('POST', '/api/accept', { slug: p.slug, t: p.t, vt: B.vt, action: 'accept', ...person, authority: true, accept: true, typed: person.name,
+    options: [], totalCents: quoteTotals(DEMO.quote.lines, []).total, plaintextSha256: B.sha, session: 'archive-check' });
+  expect(accepted.status === 200 && accepted.json.accepted, `accepting Rev B answered ${accepted.status} ${accepted.text.slice(0, 160)}`);
+  const ref = q(`select reference from public.texc_proposals where id = '${p.id}'`);
+  const snapA = A.snap.find((x) => x.card === card.id);
+  const snapB = B.snap.find((x) => x.card === card.id);
+  expect(snapA && snapB && snapA.sha256 !== snapB.sha256 && snapB.sha256 === sha256(revised), 'Rev B did not send the replaced file');
+
+  // 3. Search: by reference, client, document code; year, service and region; one proposal.
+  const search = async (f) => { const r = await arc(viewer, { action: 'search', ...f }); return r.status === 200 ? r : null; };
+  const mine = (r) => (r ? r.json.rows.filter((x) => x.proposalId === p.id) : []);
+  const byRef = await search({ q: ref });
+  const rowsRef = mine(byRef);
+  expect(rowsRef.length === 2 && rowsRef[0].rev === 'B' && rowsRef[0].current && rowsRef[0].acceptance && rowsRef[0].acceptance.name === person.name
+    && rowsRef[1].rev === 'A' && !rowsRef[1].current && rowsRef[1].supersededAt && !rowsRef[1].acceptance, `searching by reference: ${JSON.stringify(rowsRef.map((x) => [x.rev, x.current, !!x.acceptance]))}`);
+  expect(byRef && !/__vt|access_token|passphrase|\/attachments\//.test(byRef.text), 'the archive search hands out a view token, link token, passphrase or storage path');
+  const clientWord = DEMO.client.company.split(/\s+/)[0];
+  expect(mine(await search({ q: clientWord })).length === 2, `searching by the client's name (${clientWord}) did not find it`);
+  expect(mine(await search({ q: docCode.toLowerCase() })).some((x) => x.rev === 'B'), `searching by the document code ${docCode} did not find Rev B`);
+  expect(mine(await search({ q: `zz${tag}qq` })).length === 0, 'a search for nothing found it');
+  const year = new Intl.DateTimeFormat('en-AU', { timeZone: 'Australia/Hobart', year: 'numeric' }).format(new Date());
+  expect(mine(await search({ year })).length === 2 && mine(await search({ year: '1999' })).length === 0, 'the year filter does not work');
+  const service = q(`select services[1] from public.texc_proposals where id = '${p.id}'`);
+  const region = q(`select site_region from public.texc_proposals where id = '${p.id}'`);
+  expect(mine(await search({ service })).length === 2 && mine(await search({ service: 'no-such-service' })).length === 0, 'the service filter does not work');
+  expect(mine(await search({ region })).length === 2 && mine(await search({ region: 'Nowhere' })).length === 0, 'the region filter does not work');
+  const one = await search({ proposal: p.id });
+  expect(one && one.json.rows.length === 2 && one.json.rows.every((x) => x.proposalId === p.id), 'the one-proposal filter shows other proposals');
+
+  // 4. Any revision, as it was sent; its documents from its own snapshot.
+  const ra = await arc(viewer, { action: 'revision', id: A.id });
+  const rb = await arc(viewer, { action: 'revision', id: B.id });
+  expect(ra.status === 200 && ra.json.config.meta.project === originalTitle && !('__vt' in ra.json.config) && ra.json.facts.supersededAt && !ra.json.facts.current && !ra.json.facts.acceptance,
+    `Rev A as sent: ${ra.status} ${ra.json && ra.json.config && ra.json.config.meta.project}`);
+  expect(rb.status === 200 && rb.json.config.meta.project === `${originalTitle} (revised)` && rb.json.facts.current && rb.json.facts.acceptance && rb.json.facts.acceptance.name === person.name,
+    `Rev B as sent: ${rb.status}`);
+  expect((await arc(viewer, { action: 'revision', id: '00000000-0000-4000-8000-000000000000' })).status === 404 && (await arc(viewer, { action: 'revision', id: '../x' })).status === 404, 'an unknown revision was not refused');
+  const view = await viewer.call('GET', `/staff/revision/${A.id}`);
+  expect(view.status === 200 && view.headers.get('content-security-policy') === local(REVISION_CSP) && view.headers.get('x-frame-options') === 'SAMEORIGIN'
+    && view.text.includes('/assets/js/archive-view.js') && view.text.includes('data-boot="archive"') && !view.text.includes('gate.js'),
+  `the revision page: ${view.status}, policy ${view.headers.get('content-security-policy') === local(REVISION_CSP)}, frame ${view.headers.get('x-frame-options')}`);
+  const viewAnon = await anon.call('GET', `/staff/revision/${A.id}`);
+  expect(viewAnon.status === 302 && viewAnon.headers.get('location') === `/signin?next=${encodeURIComponent(`/staff/revision/${A.id}`)}`, `the revision page without a session: ${viewAnon.status}`);
+  const fileBytes = async (rev) => {
+    const r = await arc(viewer, { action: 'file', revision: rev, card: card.id });
+    if (r.status !== 200) return null;
+    return Buffer.from(await (await fetch(r.json.url)).arrayBuffer());
+  };
+  const fa = await fileBytes(A.id);
+  const fb = await fileBytes(B.id);
+  expect(fa && sha256(fa) === snapA.sha256 && fb && sha256(fb) === snapB.sha256, 'a revision\'s document is not the file that revision sent');
+  expect((await arc(viewer, { action: 'file', revision: A.id, card: 'no-such-card' })).status === 404 && (await arc(viewer, { action: 'file', revision: 'x', card: card.id })).status === 404, 'a document not in the snapshot was not refused');
+
+  // 5. The record pack's request: editors and administrators, audited, nothing secret.
+  expect((await arc(viewer, { action: 'pack', proposal: p.id })).status === 403, 'a viewer was given a record pack');
+  const packed = await arc(editor, { action: 'pack', proposal: p.id });
+  expect(packed.status === 200 && packed.json.pack.revisions.length === 2 && packed.json.pack.acceptances.length === 1 && audited('record_pack_requested', p.id),
+    `an editor's record pack: ${packed.status}, audited ${audited('record_pack_requested', p.id)}`);
+  expect(packed.status === 200 && !/access_token|passphrase|record_path|signature_path|"path"|\/attachments\//.test(packed.text), 'the pack hands out a link token, passphrase or storage path');
+
+  // 6. Keeping periods: administrators only, audited, refused outside their range.
+  expect((await arc(viewer, { action: 'retention-set', archiveAfterDays: 30 })).status === 403 && (await arc(editor, { action: 'retention-set', archiveAfterDays: 30 })).status === 403, 'someone other than an administrator changed the keeping periods');
+  expect((await arc(admin, { action: 'retention-set', archiveAfterDays: 2 })).status === 400 && (await arc(admin, { action: 'retention-set', keepAcceptedYears: 1.5 })).status === 400, 'a keeping period out of range was accepted');
+  const set = await arc(admin, { action: 'retention-set', archiveAfterDays: 30, keepAcceptedYears: '' });
+  expect(set.status === 200 && set.json.retention.archiveAfterDays === 30 && set.json.retention.keepAcceptedYears === null && audited('retention_changed'), `setting the keeping periods: ${set.status} ${set.text.slice(0, 120)}`);
+
+  // 7. The daily run: refused without the secret; archives what ran out unaccepted, never what was accepted.
+  const expired = await demoProposal(staff);
+  q(`begin; set local session_replication_role = replica;
+     update public.texc_proposals set valid_until = current_date - 60, updated_at = now() - interval '60 days' where id in ('${expired.id}', '${p.id}');
+     commit;`);
+  const secret = randomBytes(24).toString('hex');
+  const before = process.env.CRON_SECRET;
+  process.env.CRON_SECRET = secret;
+  try {
+    const noAuth = await anon.call('GET', '/api/retention');
+    const wrong = await anon.call('GET', '/api/retention', undefined, { authorization: `Bearer ${secret.slice(1)}x` });
+    const asPost = await anon.call('POST', '/api/retention', {}, { authorization: `Bearer ${secret}` });
+    expect(noAuth.status === 401 && wrong.status === 401 && asPost.status === 405, `the daily run without its secret: ${noAuth.status} / ${wrong.status} / POST ${asPost.status}`);
+    const run = await anon.call('GET', '/api/retention', undefined, { authorization: `Bearer ${secret}` });
+    const state = (id) => q(`select coalesce(archived_by, '') || '|' || coalesce(archive_reason, '') from public.texc_proposals where id = '${id}'`);
+    expect(run.status === 200 && run.json.days === 30 && run.json.archived >= 1 && /^retention\|Expired without acceptance/.test(state(expired.id)) && state(p.id) === '|',
+      `the daily run: ${run.status} ${run.text}; expired → ${state(expired.id)}; accepted → ${state(p.id)}`);
+    expect(audited('proposals_archived_automatically'), 'the daily run did not record what it archived');
+    const again = await anon.call('GET', '/api/retention', undefined, { authorization: `Bearer ${secret}` });
+    expect(again.status === 200 && again.json.archived === 0, `a second run archived again: ${again.text}`);
+    process.env.CRON_SECRET = 'short';
+    expect((await anon.call('GET', '/api/retention', undefined, { authorization: 'Bearer short' })).status === 401, 'the daily run accepted a secret too short to be one');
+  } finally {
+    if (before === undefined) delete process.env.CRON_SECRET; else process.env.CRON_SECRET = before;
+  }
+  await arc(admin, { action: 'retention-set', archiveAfterDays: '', keepAcceptedYears: '' });
+
+  // 8. In the browser: the Archive page, a revision as sent, its document, and the record pack.
+  const { ctx, page: pg, problems } = await signedInContext(a, b);
+  const zips = [];
+  try {
+    await pg.goto(`${a.url}/archive?q=${encodeURIComponent(ref)}`);
+    await pg.waitForSelector('.arc-prop .arc-rev');
+    const card8 = await pg.evaluate((id) => {
+      const el = document.querySelector(`[aria-labelledby="p-${id}"]`);
+      return el ? { revs: el.querySelectorAll('.arc-rev').length, text: el.textContent } : null;
+    }, p.id);
+    expect(card8 && card8.revs === 2 && /Current/.test(card8.text) && /Superseded/.test(card8.text) && /Accepted/.test(card8.text), `the Archive page's card: ${JSON.stringify(card8 && card8.revs)}`);
+
+    const sent = await ctx.newPage();
+    sent.on('console', (m) => { if (m.type() === 'error' || /Content Security Policy/i.test(m.text())) problems.push(`revision view: ${m.text().slice(0, 200)}`); });
+    sent.on('pageerror', (e) => problems.push('revision view script error: ' + e.message));
+    await sent.goto(`${a.url}/staff/revision/${A.id}`);
+    await sent.waitForFunction(() => document.documentElement.classList.contains('ready'), null, { timeout: 30000 });
+    const shown = await sent.evaluate(() => ({ strip: document.getElementById('staff-strip').textContent, project: document.querySelector('.topbar-project').textContent, sup: document.getElementById('superseded').hidden }));
+    expect(/revision A, as it was sent/.test(shown.strip) && /Superseded/.test(shown.strip) && shown.project === originalTitle && shown.sup,
+      `the revision as sent: ${JSON.stringify(shown)}`);
+    const [dl] = await Promise.all([sent.waitForEvent('download', { timeout: 20000 }), sent.click(`#attachments [data-attachment="${card.id}"][data-action="download"]`)]);
+    const got = readFileSync(await dl.path());
+    expect(sha256(got) === snapA.sha256, 'downloading a document from Rev A as sent did not give Rev A\'s file');
+    await sent.close();
+
+    const pack = async () => {
+      const dl = pg.waitForEvent('download', { timeout: 180000 }).catch(() => null);
+      await pg.click(`[aria-labelledby="p-${p.id}"] .arc-prop-foot button`);
+      const z = await Promise.race([dl, pg.waitForSelector('.arc-pack-out .db-error', { timeout: 180000 }).then(() => null).catch(() => null)]);
+      if (!z) throw new Error(`no record pack: ${(await pg.textContent('#db-panel')).replace(/\s+/g, ' ').slice(0, 600)} | ${problems.join(' | ').slice(0, 600)}`);
+      const buf = readFileSync(await z.path());
+      const verdict = await pg.textContent('.arc-pack-out');
+      await pg.click('#db-panel .db-close');
+      return { buf, verdict, name: z.suggestedFilename() };
+    };
+    const good = await pack();
+    zips.push(good.name);
+    let files;
+    try { files = readZip(good.buf); } catch (e) { fails.push(`the record pack is not a readable zip: ${e.message}`); files = new Map(); }
+    const at = (rel) => [...files.keys()].find((k) => k.endsWith(`-record-pack/${rel}`));
+    const bytes = (rel) => files.get(at(rel));
+    const manifest = bytes('manifest.json') ? JSON.parse(bytes('manifest.json').toString('utf8')) : null;
+    expect(/All \d+ recorded fingerprints match/.test(good.verdict) && manifest && manifest.summary.problems.length === 0, `the pack's verdict: ${good.verdict} ${manifest && JSON.stringify(manifest.summary.problems)}`);
+    for (const need of ['index.html', 'manifest.json', 'SHA256SUMS', 'revisions/rev-A/published.json', 'revisions/rev-B/published.json', 'revisions/rev-A/readable.html', 'revisions/rev-B/readable.html', 'acceptances/rev-B.html', 'history.csv', 'history.json']) {
+      if (!at(need)) fails.push(`the record pack lacks ${need}`);
+    }
+    const sums = bytes('SHA256SUMS') ? bytes('SHA256SUMS').toString('utf8').trim().split('\n').map((l) => l.split(/\s{2}/)) : [];
+    const sumOk = sums.length > 0 && sums.every(([sha, rel]) => bytes(rel) && sha256(bytes(rel)) === sha);
+    expect(sumOk && sums.length === files.size - 2, `SHA256SUMS does not match the files in the pack (${sums.length} listed, ${files.size} files)`);
+    expect(bytes('revisions/rev-A/published.json') && sha256(bytes('revisions/rev-A/published.json')) === A.sha && sha256(bytes('revisions/rev-B/published.json')) === B.sha, 'a revision\'s published text in the pack is not the bytes recorded at publishing');
+    const recSha = q(`select record_sha256 from public.texc_acceptances where proposal_id = '${p.id}'`);
+    expect(bytes('acceptances/rev-B.html') && sha256(bytes('acceptances/rev-B.html')) === recSha, 'the acceptance record in the pack is not the one stored');
+    const docs = [...files.keys()].filter((k) => /\/documents\/.+\.pdf$/.test(k)).map((k) => sha256(files.get(k)));
+    const wanted = new Set([...A.snap, ...B.snap].map((x) => x.sha256));
+    expect(docs.length === wanted.size && docs.every((s) => wanted.has(s)), `the pack's documents (${docs.length}) are not every file the revisions sent (${wanted.size})`);
+    const readable = bytes('revisions/rev-A/readable.html') ? bytes('revisions/rev-A/readable.html').toString('utf8') : '';
+    expect(readable.includes(originalTitle) && !/<script/i.test(readable) && /http-equiv="Content-Security-Policy"/.test(readable) && !/(src|href)="\/(assets|api)\//.test(readable)
+      && readable.includes('../../documents/') && /rv-in/.test(readable), 'the readable copy is not a self-contained, script-free copy of Rev A with its documents linked');
+    const csv = bytes('history.csv') ? bytes('history.csv').toString('utf8') : '';
+    expect(/published/.test(csv) && /accepted/.test(csv) && /record_pack_requested/.test(csv), 'the history does not carry the publishing, the acceptance and the pack request');
+
+    // It bites: a stored file that no longer matches its fingerprint is named, on screen and in the pack.
+    const stored = resolve(a.sb.dir, 'storage', 'texc-attachments', q(`select x->>'path' from public.texc_proposal_revisions r, jsonb_array_elements(r.attachments_snapshot) x where r.id = '${A.id}' and x->>'card' = '${card.id}'`));
+    const original = readFileSync(stored);
+    writeFileSync(stored, testPdf(`not the file that was sent ${tag}`));
+    try {
+      const bad = await pack();
+      zips.push(bad.name);
+      const m2 = JSON.parse([...readZip(bad.buf).entries()].find(([k]) => k.endsWith('/manifest.json'))[1].toString('utf8'));
+      expect(/could not be confirmed/.test(bad.verdict) && m2.summary.problems.some((x) => x.problem === 'does not match'), `a tampered document was not named: ${bad.verdict}`);
+    } finally {
+      writeFileSync(stored, original);
+    }
+    expect(problems.length === 0, `console or policy errors: ${problems.join(' | ')}`);
+  } finally {
+    await ctx.close();
+  }
+
+  return fails.length ? { status: FAIL, detail: fails } : { status: PASS, detail: [
+    'the Archive page and a revision as sent are staff-only, each under its own one policy; only the revision may be framed, and only by this origin',
+    'search finds every revision by reference, client or document code, filters by year, service, region and proposal, and hands out no token, passphrase or storage path',
+    'a revision opens with its own published text, superseded and accepted as it was; its documents come from its own snapshot, not the proposal as it is now',
+    'record packs: editors and administrators only, audited; built in Chromium, every file in SHA256SUMS, published text, documents and the acceptance record match the fingerprints recorded at the time; the readable copies are self-contained and run nothing',
+    'a stored file altered after it was sent is named as not matching, on screen and in the pack',
+    'keeping periods: administrators only, audited, in range; the daily run needs its secret, archives what ran out unaccepted and nothing accepted, records it, and does nothing twice',
+  ] };
 }

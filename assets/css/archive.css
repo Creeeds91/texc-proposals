@@ -1,0 +1,78 @@
+/*
+ * The Archive page (templates/archive.html). Built on dashboard.css: the same
+ * page, panel, filters, badges and controls; this adds the keeping periods,
+ * one card per proposal with its sent revisions, and the record pack's
+ * progress. Tokens only (check.mjs design).
+ */
+
+.arc-keep { margin-bottom: var(--space-6); }
+.arc-keep-list { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: var(--space-2) var(--space-4); font-size: var(--text-sm); }
+.arc-keep-list dt { font-weight: 700; }
+.arc-keep-by { grid-column: 1 / -1; margin-top: var(--space-2); }
+.arc-confirm { display: inline-block; padding: 1px 8px; border-radius: var(--radius-pill); background: var(--caution); color: var(--ink); font-size: var(--text-xs); font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
+.arc-keep-form { display: grid; gap: var(--space-5); }
+.arc-keep-field { gap: var(--space-2); }
+.arc-unit { display: flex; align-items: center; gap: var(--space-3); font-size: var(--text-sm); }
+.db .arc-unit input { width: 120px; height: 44px; border: 1px solid var(--doc-rule); border-radius: var(--radius-md); background: var(--white); color: var(--ink); font: inherit; padding: 0 var(--space-3); }
+
+.arc-one { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); font-size: var(--text-sm); margin-bottom: var(--space-4); }
+
+/* One proposal: its facts, then every revision it sent, newest first. */
+#arc-groups { display: grid; gap: var(--space-4); }
+.arc-prop { background: var(--white); border: 1px solid var(--doc-rule); border-radius: var(--radius-md); }
+.arc-prop-head { display: flex; justify-content: space-between; align-items: flex-start; gap: var(--space-4); padding: var(--space-4) var(--space-5) var(--space-3); }
+.arc-prop-id { min-width: 0; display: grid; gap: 2px; }
+.arc-prop-title { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-1) var(--space-3); font-size: var(--text-body); font-weight: 700; }
+.arc-prop-title .db-ref { display: inline; }
+.arc-prop-project { overflow-wrap: anywhere; }
+.arc-prop-sub, .arc-prop-services { font-size: var(--text-sm); color: var(--ink-on-paper-muted); overflow-wrap: anywhere; }
+.arc-prop-state { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-2); flex: none; }
+.arc-prop-reason { display: flex; gap: var(--space-2); align-items: flex-start; margin: 0 var(--space-5) var(--space-3); padding: var(--space-2) var(--space-3); background: var(--doc-band); border-radius: var(--radius-md); font-size: var(--text-sm); }
+.arc-prop-reason .ic { width: 15px; height: 15px; margin-top: 3px; flex: none; }
+
+.arc-revs { border-top: 1px solid var(--doc-rule); }
+.arc-rev { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--space-2) var(--space-4); padding: var(--space-3) var(--space-5); border-bottom: 1px solid var(--doc-rule); }
+.arc-rev-main { display: grid; gap: 2px; min-width: 0; font-size: var(--text-sm); }
+.arc-rev-head { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); }
+.arc-rev-label { font-family: var(--font-display); font-weight: 700; font-size: var(--text-sm); letter-spacing: var(--tracking-label); text-transform: uppercase; }
+.arc-rev-sent, .arc-rev-note { color: var(--ink-on-paper-muted); overflow-wrap: anywhere; }
+.arc-rev-acc { display: flex; gap: 6px; align-items: flex-start; font-weight: 700; }
+.arc-rev-acc .ic { width: 15px; height: 15px; margin-top: 3px; color: var(--go); flex: none; }
+.arc-rev-actions { display: flex; flex-direction: column; align-items: flex-end; gap: var(--space-1); }
+.arc-none { color: var(--ink-on-paper-muted); font-size: var(--text-sm); padding: var(--space-1) 0; }
+
+.arc-docs { grid-column: 1 / -1; display: grid; gap: var(--space-2); margin-top: var(--space-1); }
+.arc-doc { display: flex; justify-content: space-between; align-items: center; gap: var(--space-3); padding: var(--space-2) var(--space-3); border: 1px solid var(--doc-rule); border-radius: var(--radius-md); background: var(--doc-page); }
+.arc-doc.is-hit { border-color: var(--doc-gold-text); box-shadow: inset 3px 0 0 var(--doc-gold-text); }
+.arc-doc-main { display: grid; gap: 2px; min-width: 0; font-size: var(--text-sm); }
+.arc-doc-title { font-weight: 700; overflow-wrap: anywhere; }
+.arc-doc-meta { color: var(--ink-on-paper-muted); font-size: var(--text-xs); overflow-wrap: anywhere; }
+
+.arc-prop-foot { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2) var(--space-4); padding: var(--space-3) var(--space-5) var(--space-4); }
+.arc-prop-foot .db-note { margin: 0; flex: 1 1 280px; }
+
+/* The record pack, in the side panel, while it is made. */
+.arc-pack-bar { width: 100%; height: 8px; margin: var(--space-4) 0 var(--space-3); accent-color: var(--doc-gold-text); }
+.arc-pack-log { display: grid; gap: 2px; max-height: 40vh; overflow-y: auto; font-size: var(--text-sm); color: var(--ink-on-paper-muted); padding-left: var(--space-5); list-style: decimal; }
+.arc-pack-out { margin-top: var(--space-4); }
+.arc-pack-verdict { display: flex; gap: var(--space-2); align-items: flex-start; font-weight: 700; }
+.arc-pack-verdict .ic { width: 18px; height: 18px; margin-top: 2px; color: var(--go); flex: none; }
+.arc-pack-verdict.is-bad { padding: var(--space-3); border: 1px solid var(--stop); border-radius: var(--radius-md); font-weight: 400; }
+.arc-pack-verdict.is-bad .ic { color: var(--stop); }
+.arc-pack-verdict.is-bad ul { list-style: disc; margin: var(--space-2) 0 0 var(--space-5); font-size: var(--text-sm); }
+
+/* The frame a revision is drawn in for the pack's readable copy: off screen, never seen or reached. */
+.arc-frame { position: fixed; left: -20000px; top: 0; width: 1280px; height: 900px; border: 0; pointer-events: none; }
+
+@media (max-width: 760px) {
+  .arc-keep-list { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  .arc-keep-list dd { margin-bottom: var(--space-3); }
+  .arc-prop-head { flex-direction: column; padding: var(--space-4) var(--space-4) var(--space-3); }
+  .arc-prop-state { justify-content: flex-start; }
+  .arc-prop-reason { margin: 0 var(--space-4) var(--space-3); }
+  .arc-rev { grid-template-columns: minmax(0, 1fr); padding: var(--space-3) var(--space-4); }
+  .arc-rev-actions { flex-direction: row; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-4); }
+  .arc-doc { flex-wrap: wrap; }
+  .arc-prop-foot { padding: var(--space-3) var(--space-4) var(--space-4); }
+  .arc-prop-foot .btn { flex: 1 1 100%; justify-content: center; }
+}

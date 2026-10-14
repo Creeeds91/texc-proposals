@@ -745,7 +745,8 @@ create trigger texc_drafts_guard before update on public.texc_drafts
 -- The one door through the append-only and immutability triggers: delete an
 -- archived proposal and everything that hangs off it, for good. Only when it
 -- has been archived for 90 days, and never once it has been accepted (an
--- acceptance is a business record and is kept). The caller (lib/purge.js)
+-- acceptance is a business record and is kept) unless the keeping period
+-- TEXC sets (Phase 9) has passed. The caller (lib/purge.js)
 -- has checked the person is Brand in Black, recorded the deletion in the
 -- staff audit first, and removes the stored files once this commits. The
 -- transaction-local flag dies with the transaction; nothing else can set it.
@@ -754,20 +755,30 @@ returns jsonb language plpgsql security definer set search_path = '' as $$
 declare
   prop public.texc_proposals%rowtype;
   counts jsonb;
+  keep_years integer;
 begin
   select * into prop from public.texc_proposals where id = (p->>'proposal_id')::uuid for update;
   if not found then raise exception 'no such proposal' using errcode = 'PT404'; end if;
   if prop.archived_at is null then raise exception 'conflict: not archived' using errcode = 'PT409'; end if;
   if prop.archived_at > now() - interval '90 days' then raise exception 'conflict: archived less than 90 days ago' using errcode = 'PT409'; end if;
+  -- An accepted proposal is a business record: kept, unless TEXC has set a
+  -- keeping period (Phase 9, texc_settings 'retention') and it has passed since
+  -- the last acceptance. Unset, it is kept for good.
   if exists (select 1 from public.texc_acceptances where proposal_id = prop.id) then
-    raise exception 'conflict: accepted proposals are kept' using errcode = 'PT409';
+    keep_years := (select case when (value->>'keepAcceptedYears') ~ '^[0-9]{1,3}$' then (value->>'keepAcceptedYears')::integer end
+                   from public.texc_settings where key = 'retention');
+    if keep_years is null or keep_years < 1
+       or (select max(accepted_at) from public.texc_acceptances where proposal_id = prop.id) > now() - make_interval(years => keep_years) then
+      raise exception 'conflict: accepted proposals are kept' using errcode = 'PT409';
+    end if;
   end if;
   if prop.reference is distinct from nullif(p->>'reference', '') then raise exception 'conflict: reference' using errcode = 'PT409'; end if;
   counts := jsonb_build_object(
     'revisions', (select count(*) from public.texc_proposal_revisions where proposal_id = prop.id),
     'events', (select count(*) from public.texc_events where proposal_id = prop.id),
     'views', (select count(*) from public.texc_proposal_views where proposal_id = prop.id),
-    'files', (select count(*) from public.texc_attachments where proposal_id = prop.id));
+    'files', (select count(*) from public.texc_attachments where proposal_id = prop.id),
+    'acceptances', (select count(*) from public.texc_acceptances where proposal_id = prop.id));
   perform set_config('texc.purge', 'on', true);
   delete from public.texc_drafts where proposal_id = prop.id;
   update public.texc_proposals set current_revision_id = null, accepted_revision_id = null where id = prop.id;
@@ -775,6 +786,7 @@ begin
   delete from public.texc_events where proposal_id = prop.id;
   delete from public.texc_proposal_views where proposal_id = prop.id;
   delete from public.texc_attachments where proposal_id = prop.id;
+  delete from public.texc_acceptances where proposal_id = prop.id;
   delete from public.texc_proposal_revisions where proposal_id = prop.id;
   delete from public.texc_proposals where id = prop.id;
   perform set_config('texc.purge', 'off', true);
@@ -895,6 +907,86 @@ returns jsonb language sql stable security definer set search_path = '' as $$
   ) u
 $$;
 
+-- ---------------------------------------------------------------- archive and retention (Phase 9)
+
+-- The archive: one row per revision ever published, newest first, with its
+-- proposal, its acceptance and the documents it offered (from the published
+-- text, the client's own view, and its snapshot's fingerprints; never a
+-- storage path). A revision matches when its proposal matches the dashboard's
+-- search, or every word appears in the titles and codes of its documents.
+create or replace function public.texc_archive(p jsonb)
+returns jsonb language plpgsql stable security definer set search_path = '' as $$
+declare
+  q text := lower(btrim(left(coalesce(p->>'q', ''), 200)));
+  words text[];
+  hits uuid[];
+  yr integer := case when coalesce(p->>'year', '') ~ '^[0-9]{4}$' then (p->>'year')::integer end;
+begin
+  select array_agg(w) into words from (
+    select w from regexp_split_to_table(regexp_replace(q, '[^[:alnum:]]+', ' ', 'g'), ' ') w where w <> '' limit 8) s;
+  if words is not null then
+    select array_agg((x #>> '{}')::uuid) into hits from jsonb_array_elements(public.texc_search(q)) x;
+  end if;
+  return coalesce((select jsonb_agg(to_jsonb(o) order by o.published_at desc) from (
+    select pr.id as proposal_id, pr.reference, pr.project, pr.client_company, pr.site_locality, pr.site_region, pr.services,
+      pr.doc_type, pr.archived_at, pr.archive_reason, pr.is_test, pr.status,
+      r.id as revision_id, r.rev_label, r.rev_index, r.published_at, r.published_by, r.superseded_at, r.withdrawn_at,
+      r.change_note, r.template_version, (r.id = pr.current_revision_id) as current,
+      coalesce(r.published_text::jsonb -> 'attachments', '[]'::jsonb) as documents,
+      (select coalesce(jsonb_agg(jsonb_build_object('card', x->>'card', 'sha256', x->>'sha256', 'bytes', x->'bytes', 'pages', x->'pages',
+          'evidence', x->>'evidence', 'expiresOn', x->>'expiresOn')), '[]'::jsonb)
+        from jsonb_array_elements(case when jsonb_typeof(r.attachments_snapshot) = 'array' then r.attachments_snapshot else '[]'::jsonb end) x) as files,
+      (select jsonb_build_object('id', a.id, 'name', a.name, 'company', a.company, 'accepted_at', a.accepted_at, 'kind', a.kind)
+        from public.texc_acceptances a where a.revision_id = r.id) as acceptance
+    from public.texc_proposal_revisions r
+    join public.texc_proposals pr on pr.id = r.proposal_id
+    where (words is null
+        or pr.id = any(coalesce(hits, '{}'))
+        or not exists (select 1 from unnest(words) w where strpos(lower(coalesce((
+              select string_agg(coalesce(a->>'title', '') || ' ' || coalesce(a->>'docCode', ''), ' ')
+              from jsonb_array_elements(coalesce(r.published_text::jsonb -> 'attachments', '[]'::jsonb)) a), '')), w) = 0))
+      and (yr is null or extract(year from r.published_at at time zone 'Australia/Hobart') = yr)
+      and (coalesce(p->>'service', '') = '' or pr.services @> array[p->>'service'])
+      and (coalesce(p->>'region', '') = '' or pr.site_region = p->>'region')
+      and (coalesce(p->>'proposal', '') = '' or pr.id::text = p->>'proposal')
+    order by r.published_at desc
+    limit greatest(1, least(coalesce((p->>'limit')::integer, 300), 2000))
+  ) o), '[]'::jsonb);
+end $$;
+
+-- Retention (Phase 9). TEXC's keeping periods live in texc_settings under
+-- 'retention': { archiveAfterDays, keepAcceptedYears }. Unset, nothing is
+-- archived automatically and an accepted proposal is kept for good. This
+-- archives, never deletes: a proposal that ran out without being accepted,
+-- has had no change for that long either, and is not archived yet. Called
+-- daily (api/retention.js); each one is archived through texc_set_archived,
+-- so it is logged like any other archiving.
+create or replace function public.texc_auto_archive(p jsonb)
+returns jsonb language plpgsql security definer set search_path = '' as $$
+declare
+  days integer := (select case when (value->>'archiveAfterDays') ~ '^[0-9]{1,4}$' then (value->>'archiveAfterDays')::integer end
+                   from public.texc_settings where key = 'retention');
+  today date := (now() at time zone 'Australia/Hobart')::date;
+  done uuid[] := '{}';
+  pid uuid;
+begin
+  if days is null or days < 1 then return jsonb_build_object('archived', '[]'::jsonb, 'days', null); end if;
+  for pid in
+    select pr.id from public.texc_proposals pr
+    where pr.archived_at is null and pr.current_revision_id is not null
+      and not exists (select 1 from public.texc_acceptances a where a.proposal_id = pr.id)
+      and coalesce(pr.valid_until, (pr.link_expires_at at time zone 'Australia/Hobart')::date) < today - days
+      and pr.updated_at < now() - make_interval(days => days)
+    order by pr.updated_at
+    limit greatest(1, least(coalesce((p->>'limit')::integer, 200), 1000))
+  loop
+    perform public.texc_set_archived(jsonb_build_object('proposal_id', pid, 'archive', true, 'actor', 'retention',
+      'reason', format('Expired without acceptance (archived automatically, %s days on)', days)));
+    done := done || pid;
+  end loop;
+  return jsonb_build_object('archived', to_jsonb(done), 'days', days);
+end $$;
+
 -- ---------------------------------------------------------------- locked down from birth
 
 do $$
@@ -917,7 +1009,8 @@ begin
     'texc_rate_hit(text, integer, integer)', 'texc_claim_reference(uuid, text)', 'texc_publish(jsonb)',
     'texc_rotate(jsonb)', 'texc_withdraw(uuid, text, text)', 'texc_record_view(jsonb)', 'texc_accept(jsonb)',
     'texc_set_archived(jsonb)', 'texc_search(text)', 'texc_overview(jsonb)', 'texc_purge(jsonb)', 'texc_drafts_guard()',
-    'texc_evidence_versions_guard()', 'texc_evidence_guard()', 'texc_evidence_usage()'] loop
+    'texc_evidence_versions_guard()', 'texc_evidence_guard()', 'texc_evidence_usage()',
+    'texc_archive(jsonb)', 'texc_auto_archive(jsonb)'] loop
     execute format('revoke execute on function public.%s from public, anon, authenticated', f);
     execute format('grant execute on function public.%s to service_role', f);
   end loop;
